@@ -1,0 +1,29 @@
+node_modules/
+dist/
+*.log
+
+# Build and coverage output
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Local runtime state
+.env
+.env.*
+!.env.example
+jobs.db
+*.sqlite
+*.sqlite3
+*.db
+
+# Local scratch space
+scratch/
+.omx/
+.agents/
+.gemini/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
