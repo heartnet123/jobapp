@@ -4,9 +4,28 @@ import type { JobApplication, Stage, Contact } from './types';
 import ApplicationDrawer from './components/ApplicationDrawer.vue';
 import PipelineView from './components/PipelineView.vue';
 import AnalyticsView from './components/AnalyticsView.vue';
+import ProfileView from './components/ProfileView.vue';
 import Toast from './components/Toast.vue';
 import { STAGE_ICONS } from './constants';
 import { getTodayString, isReminderDue, stageClass, detectChangesAndGenerateLogs } from './utils';
+
+// Active User Profile info for sidebar & header
+const activeProfileName = ref('John Doe');
+const activeProfileTitle = ref('Professional Pro');
+
+function handleUpdateActiveProfile(name: string, title: string) {
+  activeProfileName.value = name || 'John Doe';
+  activeProfileTitle.value = title || 'Professional Pro';
+}
+
+const avatarInitials = computed(() => {
+  const parts = activeProfileName.value.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return activeProfileName.value.substring(0, 2).toUpperCase();
+}
+);
 
 
 // -------------------------------------------------------------
@@ -60,6 +79,22 @@ onMounted(async () => {
     } else {
       applications.value = [];
     }
+  }
+
+  // Load active profile info
+  try {
+    const profilesRes = await fetch('/api/profiles');
+    if (profilesRes.ok) {
+      const list = await profilesRes.json();
+      const storedActiveId = localStorage.getItem('active_profile_id');
+      const active = list.find((p: any) => p.id === storedActiveId) || list[0];
+      if (active) {
+        activeProfileName.value = active.fullName;
+        activeProfileTitle.value = active.title;
+      }
+    }
+  } catch (err) {
+    console.warn('Could not fetch active profile on mount', err);
   }
 
   // Initialize follow-up notifications
@@ -117,7 +152,7 @@ async function deleteApplication(id: string) {
 // -------------------------------------------------------------
 // ROUTING & NAVIGATION VIEWS
 // -------------------------------------------------------------
-type ViewLabel = 'Overview' | 'Pipeline' | 'Analytics';
+type ViewLabel = 'Overview' | 'Pipeline' | 'Analytics' | 'Profile';
 
 const currentView = ref<ViewLabel>('Overview');
 
@@ -125,6 +160,7 @@ const navItems = computed(() => [
   { icon: 'solar:widget-5-linear', label: 'Overview', active: currentView.value === 'Overview' },
   { icon: 'solar:layers-minimalistic-linear', label: 'Pipeline', active: currentView.value === 'Pipeline' },
   { icon: 'solar:chart-square-linear', label: 'Analytics', active: currentView.value === 'Analytics' },
+  { icon: 'solar:user-rounded-linear', label: 'Profile', active: currentView.value === 'Profile' },
 ]);
 
 function setView(view: ViewLabel) {
@@ -555,12 +591,12 @@ function triggerBrowserNotifications() {
         </nav>
       </div>
 
-      <div class="profile-panel">
-        <button type="button" class="profile-button">
-          <span class="avatar">JD</span>
+      <div class="profile-panel" @click="setView('Profile')">
+        <button type="button" class="profile-button" :class="{ active: currentView === 'Profile' }">
+          <span class="avatar">{{ avatarInitials }}</span>
           <span class="profile-text">
-            <span class="profile-name">John Doe</span>
-            <span class="profile-plan">Professional Pro</span>
+            <span class="profile-name">{{ activeProfileName }}</span>
+            <span class="profile-plan">{{ activeProfileTitle }}</span>
           </span>
         </button>
       </div>
@@ -924,6 +960,12 @@ function triggerBrowserNotifications() {
         <AnalyticsView
           v-else-if="currentView === 'Analytics'"
           :applications="applications"
+        />
+
+        <!-- Profiles (User Details & CVs) -->
+        <ProfileView
+          v-else-if="currentView === 'Profile'"
+          @update-active-profile="handleUpdateActiveProfile"
         />
       </div>
     </main>

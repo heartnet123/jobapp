@@ -40,4 +40,15 @@ export interface JobApplication {
   history?: ActivityLogEntry[];
 }
 
-
+export interface UserProfile {
+  id: string;
+  fullName: string;
+  email: string;
+  phone: string;
+  title: string;
+  bio: string;
+  resumeText?: string;
+  resumeFileName?: string;
+  resumeFile?: string; // base64 string
+  updatedAt: string;
+}

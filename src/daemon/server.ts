@@ -49,6 +49,19 @@ async function initDb() {
       contacts TEXT NOT NULL,  -- JSON string
       history TEXT NOT NULL   -- JSON string
     );
+
+    CREATE TABLE IF NOT EXISTS profiles (
+      id TEXT PRIMARY KEY,
+      fullName TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      title TEXT NOT NULL,
+      bio TEXT NOT NULL,
+      resumeText TEXT,
+      resumeFileName TEXT,
+      resumeFile TEXT,
+      updatedAt TEXT NOT NULL
+    );
   `);
 }
 
@@ -184,6 +197,99 @@ app.delete('/api/applications/:id', async (req, res) => {
     res.json({ message: `Successfully deleted application ${id}` });
   } catch (error: any) {
     console.error('Error deleting application:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/profiles - Get all profiles
+app.get('/api/profiles', async (req, res) => {
+  try {
+    const rows = await db.all('SELECT * FROM profiles ORDER BY updatedAt DESC');
+    res.json(rows);
+  } catch (error: any) {
+    console.error('Error fetching profiles:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/profiles - Create or update a profile
+app.post('/api/profiles', async (req, res) => {
+  try {
+    const profile = req.body;
+    if (!profile.id || !profile.fullName) {
+      return res.status(400).json({ error: 'Missing required fields (id, fullName)' });
+    }
+
+    const existing = await db.get('SELECT id FROM profiles WHERE id = ?', [profile.id]);
+    if (existing) {
+      // Update
+      await db.run(
+        `UPDATE profiles SET
+          fullName = ?,
+          email = ?,
+          phone = ?,
+          title = ?,
+          bio = ?,
+          resumeText = ?,
+          resumeFileName = ?,
+          resumeFile = ?,
+          updatedAt = ?
+        WHERE id = ?`,
+        [
+          profile.fullName,
+          profile.email,
+          profile.phone,
+          profile.title,
+          profile.bio,
+          profile.resumeText || null,
+          profile.resumeFileName || null,
+          profile.resumeFile || null,
+          new Date().toISOString(),
+          profile.id,
+        ]
+      );
+    } else {
+      // Insert
+      await db.run(
+        `INSERT INTO profiles (
+          id, fullName, email, phone, title, bio, resumeText, resumeFileName, resumeFile, updatedAt
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          profile.id,
+          profile.fullName,
+          profile.email,
+          profile.phone,
+          profile.title,
+          profile.bio,
+          profile.resumeText || null,
+          profile.resumeFileName || null,
+          profile.resumeFile || null,
+          new Date().toISOString(),
+        ]
+      );
+    }
+
+    const saved = await db.get('SELECT * FROM profiles WHERE id = ?', [profile.id]);
+    res.status(existing ? 200 : 201).json(saved);
+  } catch (error: any) {
+    console.error('Error saving profile:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/profiles/:id - Delete a profile
+app.delete('/api/profiles/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = await db.get('SELECT id FROM profiles WHERE id = ?', [id]);
+    if (!existing) {
+      return res.status(404).json({ error: `Profile with ID ${id} not found` });
+    }
+
+    await db.run('DELETE FROM profiles WHERE id = ?', [id]);
+    res.json({ message: `Successfully deleted profile ${id}` });
+  } catch (error: any) {
+    console.error('Error deleting profile:', error);
     res.status(500).json({ error: error.message });
   }
 });

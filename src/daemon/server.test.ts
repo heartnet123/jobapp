@@ -21,6 +21,7 @@ describe('SQLite Daemon Integration Tests', () => {
     
     // Clear out table for tests
     await db.run('DELETE FROM applications');
+    await db.run('DELETE FROM profiles');
 
     // Start Express + WebSocket server
     await new Promise<void>((resolve) => {
@@ -177,5 +178,81 @@ describe('SQLite Daemon Integration Tests', () => {
     const getRes = await fetch(`http://localhost:${TEST_PORT}/api/applications`);
     const allApps = await getRes.json() as JobApplication[];
     expect(allApps).toHaveLength(0);
+  });
+
+  const testProfile = {
+    id: 'PROF-TEST-001',
+    fullName: 'Jane Doe',
+    email: 'jane.doe@example.com',
+    phone: '555-0199',
+    title: 'Vue Specialist',
+    bio: 'Experienced frontend developer working with Vue 3 and Vite.',
+    resumeText: 'Pasted resume content...',
+    resumeFileName: 'resume.pdf',
+    resumeFile: 'data:application/pdf;base64,YmFzZTY0Y29udGVudA=='
+  };
+
+  it('should create a new user profile (POST /api/profiles)', async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/profiles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(testProfile),
+    });
+
+    expect(res.status).toBe(201);
+    const data = await res.json() as any;
+    expect(data.id).toBe(testProfile.id);
+    expect(data.fullName).toBe(testProfile.fullName);
+    expect(data.title).toBe(testProfile.title);
+    expect(data.resumeFileName).toBe(testProfile.resumeFileName);
+  });
+
+  it('should retrieve all profiles (GET /api/profiles)', async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/profiles`);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any[];
+    expect(data).toHaveLength(1);
+    expect(data[0].id).toBe(testProfile.id);
+    expect(data[0].fullName).toBe(testProfile.fullName);
+  });
+
+  it('should update an existing profile (POST /api/profiles with existing ID)', async () => {
+    const updatedProfile = {
+      ...testProfile,
+      fullName: 'Jane Smith',
+      title: 'Senior Vue Architect'
+    };
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/profiles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedProfile),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.fullName).toBe('Jane Smith');
+    expect(data.title).toBe('Senior Vue Architect');
+
+    // Retrieve again to verify persistence
+    const getRes = await fetch(`http://localhost:${TEST_PORT}/api/profiles`);
+    const all = await getRes.json() as any[];
+    expect(all[0].fullName).toBe('Jane Smith');
+    expect(all[0].title).toBe('Senior Vue Architect');
+  });
+
+  it('should delete a user profile (DELETE /api/profiles/:id)', async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/profiles/${testProfile.id}`, {
+      method: 'DELETE',
+    });
+
+    expect(res.status).toBe(200);
+    const deleteResult = await res.json() as { message: string };
+    expect(deleteResult.message).toContain('Successfully deleted');
+
+    // Verify DB is now empty
+    const getRes = await fetch(`http://localhost:${TEST_PORT}/api/profiles`);
+    const all = await getRes.json() as any[];
+    expect(all).toHaveLength(0);
   });
 });
