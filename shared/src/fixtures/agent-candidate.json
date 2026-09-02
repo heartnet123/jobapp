@@ -1,0 +1,28 @@
+{
+  "id": "cand-9f2d-8b3a-4c1e",
+  "source": "LinkedIn",
+  "sourceUrl": "https://www.linkedin.com/jobs/view/123456789",
+  "company": "Stripe",
+  "role": "Staff Software Engineer",
+  "location": "San Francisco, CA",
+  "workMode": "Remote",
+  "salary": "$180,000 - $220,000",
+  "score": {
+    "grade": "A",
+    "numeric": 95,
+    "confidence": 0.9,
+    "blocks": {
+      "role_fit": 98,
+      "compensation": 90,
+      "work_mode_location": 100,
+      "source_confidence": 95,
+      "freshness": 92,
+      "pipeline_priority": 90
+    },
+    "rationale": [
+      "Staff level matching with 8+ years experience requested",
+      "Excellent compensation matching user target",
+      "Allows remote from anywhere in US"
+    ]
+  }
+}
