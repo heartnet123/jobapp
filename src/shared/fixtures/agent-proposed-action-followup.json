@@ -1,9 +1,0 @@
-{
-  "id": "action-followup-9012",
-  "type": "follow_up",
-  "applicationId": "app-existing-9999",
-  "message": "Send thank you note after technical screen",
-  "dueDate": "2026-05-24T12:00:00.000Z",
-  "checklistText": "Write thank-you letter template",
-  "reason": "Technical interview completed yesterday. Standard follow-up window is open."
-}

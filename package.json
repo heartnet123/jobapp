@@ -3,34 +3,30 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "vue-tsc -b && vite build",
-    "preview": "vite preview --host 127.0.0.1",
-    "test:contract": "node --experimental-strip-types src/shared/contract-test.ts",
-    "test": "npm run test:contract && npm run test:daemon",
-    "test:daemon": "vitest run src/daemon/server.test.ts",
-    "daemon": "tsx src/daemon/server.ts"
-  },
-  "dependencies": {
-    "cors": "^2.8.6",
-    "express": "^5.2.1",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^6.0.1",
-    "vue": "^3.5.13",
-    "ws": "^8.21.0"
+    "dev": "concurrently -n frontend,backend -c cyan,yellow \"npm run dev --workspace=@jobapp/frontend\" \"npm run dev --workspace=@jobapp/backend\"",
+    "dev:frontend": "npm run dev --workspace=@jobapp/frontend",
+    "dev:backend": "npm run dev --workspace=@jobapp/backend",
+    "build": "npm run build --workspace=@jobapp/frontend",
+    "preview": "npm run preview --workspace=@jobapp/frontend",
+    "test": "npm run test:contract && npm run test:backend",
+    "test:contract": "npm run test --workspace=@jobapp/shared",
+    "test:backend": "npm run test --workspace=@jobapp/backend",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "@types/sqlite3": "^3.1.11",
-    "@types/ws": "^8.18.1",
-    "@vitejs/plugin-vue": "^5.2.1",
-    "playwright": "^1.60.0",
-    "tsx": "^4.22.3",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.5",
-    "vitest": "^4.1.7",
-    "vue-tsc": "^2.2.0"
+    "concurrently": "^10.0.5",
+    "oxlint": "^1.81.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.0": true,
+    "sqlite3@6.0.1": true
   }
 }
