@@ -23,6 +23,11 @@ scratch/
 .agents/
 .gemini/
 .claude/
+.codegraph/
+.devin/
+.omc/
+.omg/
+.serena/
 
 # Editor and OS files
 .vscode/

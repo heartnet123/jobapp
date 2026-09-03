@@ -8,39 +8,42 @@ import path from "path";
 import fs from "node:fs";
 import { fileURLToPath } from "url";
 
+// ES Module dirname resolution
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 // Load .env file manually into process.env if it exists.
 // Existing process env always wins so test/dev scripts can override PORT safely.
-try {
-  const envPath = path.resolve(process.cwd(), ".env");
-  if (fs.existsSync(envPath)) {
-    const parsedEnv: Record<string, string> = {};
-    const envContent = fs.readFileSync(envPath, "utf8");
-    for (const line of envContent.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith("#")) continue;
-      const index = trimmed.indexOf("=");
-      if (index > 0) {
-        const key = trimmed.slice(0, index).trim();
-        let val = trimmed.slice(index + 1).trim();
-        // Strip quotes if any
-        if (
-          (val.startsWith('"') && val.endsWith('"')) ||
-          (val.startsWith("'") && val.endsWith("'"))
-        ) {
-          val = val.slice(1, -1);
+for (const envPath of [
+  path.resolve(__dirname, "../../.env"),
+  path.resolve(process.cwd(), ".env"),
+]) {
+  try {
+    if (fs.existsSync(envPath)) {
+      const envContent = fs.readFileSync(envPath, "utf8");
+      for (const line of envContent.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const index = trimmed.indexOf("=");
+        if (index > 0) {
+          const key = trimmed.slice(0, index).trim();
+          let val = trimmed.slice(index + 1).trim();
+          // Strip quotes if any
+          if (
+            (val.startsWith('"') && val.endsWith('"')) ||
+            (val.startsWith("'") && val.endsWith("'"))
+          ) {
+            val = val.slice(1, -1);
+          }
+          if (process.env[key] === undefined) {
+            process.env[key] = val;
+          }
         }
-        parsedEnv[key] = val;
       }
     }
-
-    for (const [key, val] of Object.entries(parsedEnv)) {
-      if (process.env[key] === undefined) {
-        process.env[key] = val;
-      }
-    }
+  } catch (err) {
+    console.warn("Failed to load .env file:", err);
   }
-} catch (err) {
-  console.warn("Failed to load .env file:", err);
 }
 import type { JobApplication } from "@jobapp/shared";
 import { STAGES, WORK_MODES } from "@jobapp/shared";
@@ -69,10 +72,6 @@ import {
   testClassifierConnection,
 } from "./automation/emailAutomationService";
 import { validateNimEnvConfig } from "./automation/nimClassifier";
-
-// ES Module dirname resolution
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Port and DB settings
 const PORT = process.env.PORT || 3001;

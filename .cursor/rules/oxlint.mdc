@@ -1,0 +1,12 @@
+---
+description: Always run oxlint after editing JavaScript or TypeScript code and fix any reported errors
+globs: ["**/*.js", "**/*.jsx", "**/*.ts", "**/*.tsx", "**/*.vue", "**/*.mjs", "**/*.cjs"]
+alwaysApply: true
+---
+
+# Oxlint Lint & Fix Rule
+
+Whenever you create or modify JavaScript, TypeScript, or Vue files:
+1. Run `npx -y oxlint@latest` (or `npx -y oxlint@latest --fix`) immediately after making changes.
+2. If any lint errors or warnings are found, inspect the diagnostics and fix them right away.
+3. Verify that `npx -y oxlint@latest` passes with 0 errors before concluding the work.

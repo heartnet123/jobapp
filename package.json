@@ -9,14 +9,14 @@
     "frontend"
   ],
   "scripts": {
-    "dev": "concurrently -n frontend,backend -c cyan,yellow \"npm run dev --workspace=@jobapp/frontend\" \"npm run dev --workspace=@jobapp/backend\"",
-    "dev:frontend": "npm run dev --workspace=@jobapp/frontend",
-    "dev:backend": "npm run dev --workspace=@jobapp/backend",
-    "build": "npm run build --workspace=@jobapp/frontend",
-    "preview": "npm run preview --workspace=@jobapp/frontend",
-    "test": "npm run test:contract && npm run test:backend",
-    "test:contract": "npm run test --workspace=@jobapp/shared",
-    "test:backend": "npm run test --workspace=@jobapp/backend",
+    "dev": "concurrently -n frontend,backend -c cyan,yellow \"bun --filter @jobapp/frontend dev\" \"bun --filter @jobapp/backend dev\"",
+    "dev:frontend": "bun --filter @jobapp/frontend dev",
+    "dev:backend": "bun --filter @jobapp/backend dev",
+    "build": "bun --filter @jobapp/frontend build",
+    "preview": "bun --filter @jobapp/frontend preview",
+    "test": "bun run test:contract && bun run test:backend",
+    "test:contract": "bun --filter @jobapp/shared test",
+    "test:backend": "bun --filter @jobapp/backend test",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix"
   },
