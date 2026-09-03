@@ -32,4 +32,10 @@ scratch/
 # Editor and OS files
 .vscode/
 .idea/
+.cursor/
 .DS_Store
+
+# Local docs and roadmap
+ROADMAP.html
+ROADMAP.md
+docs/
