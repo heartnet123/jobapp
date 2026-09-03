@@ -167,6 +167,9 @@ function onPointerUp(event: PointerEvent) {
   if (pointerDragStarted.value) {
     event.preventDefault();
     suppressClick.value = true;
+    setTimeout(() => {
+      suppressClick.value = false;
+    }, 300);
     const dropColumn = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-stage]');
     const stage = dropColumn?.dataset.stage as Stage | undefined;
     if (stage && pointerDragApp.value.stage !== stage) {

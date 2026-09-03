@@ -89,7 +89,14 @@ let DB_PATH = getDbPath();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "10mb" }));
+const defaultJson = express.json();
+const largeJson = express.json({ limit: process.env.JSON_BODY_LIMIT || "10mb" });
+app.use((req, res, next) => {
+  if (req.path === "/api/parse-resume" || (req.path === "/api/profiles" && req.method === "POST")) {
+    return largeJson(req, res, next);
+  }
+  return defaultJson(req, res, next);
+});
 
 // Pure backend API server only - do not serve frontend assets
 app.use((req, res, next) => {
