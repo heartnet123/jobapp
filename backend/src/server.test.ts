@@ -1,23 +1,23 @@
+process.env.NODE_ENV = 'test';
+
 import { describe, it, expect, beforeAll, afterAll } from '@rstest/core';
-import { server, initDb, db, DB_PATH } from './server';
+import { server, initDb, db, getDbPath } from './server';
 import fs from 'fs';
 import WebSocket from 'ws';
 import type { JobApplication } from '@jobapp/shared';
-
-// Set NODE_ENV to 'test' so we use jobs.test.db
-process.env.NODE_ENV = 'test';
 
 const TEST_PORT = 3010;
 
 describe('SQLite Daemon Integration Tests', () => {
   beforeAll(async () => {
+    const testDbPath = getDbPath();
     // Delete old test database if it exists
-    if (fs.existsSync(DB_PATH)) {
-      fs.unlinkSync(DB_PATH);
+    if (fs.existsSync(testDbPath)) {
+      fs.unlinkSync(testDbPath);
     }
     
     // Initialize Database
-    await initDb();
+    await initDb(testDbPath);
     
     // Clear out table for tests
     await db.run('DELETE FROM applications');
@@ -43,8 +43,9 @@ describe('SQLite Daemon Integration Tests', () => {
     await db.close();
 
     // Clean up test database file
-    if (fs.existsSync(DB_PATH)) {
-      fs.unlinkSync(DB_PATH);
+    const testDbPath = getDbPath();
+    if (fs.existsSync(testDbPath)) {
+      fs.unlinkSync(testDbPath);
     }
   });
 

@@ -618,7 +618,7 @@ button {
     justify-content: space-around;
     align-items: center;
     padding-bottom: env(safe-area-inset-bottom);
-    z-index: 100;
+    z-index: 99;
     box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
   }
 

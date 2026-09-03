@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 
@@ -21,14 +21,26 @@ function isJsTsFile(filePath) {
   return JS_TS_EXTENSIONS.has(ext);
 }
 
-function runCommand(cmd) {
+function runOxlint(args = []) {
   try {
+    const isWin = process.platform === 'win32';
+    const oxlintBin = path.resolve(
+      process.cwd(),
+      'node_modules',
+      '.bin',
+      isWin ? 'oxlint.cmd' : 'oxlint'
+    );
+    const useLocal = fs.existsSync(oxlintBin);
+    const cmd = useLocal ? oxlintBin : (isWin ? 'npx.cmd' : 'npx');
+    const finalArgs = useLocal ? args : ['-y', 'oxlint@latest', ...args];
+
     return {
       success: true,
-      output: execSync(cmd, {
+      output: execFileSync(cmd, finalArgs, {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 30000
+        timeout: 30000,
+        shell: isWin
       })
     };
   } catch (error) {
@@ -78,8 +90,12 @@ async function main() {
 
   // Handle Stop hook
   if (payload && payload.terminationReason) {
-    const checkResult = runCommand('npx -y oxlint@latest');
-    if (!checkResult.success || (checkResult.output && checkResult.output.includes('error'))) {
+    const checkResult = runOxlint(['backend', 'frontend', 'shared']);
+    if (checkResult.output && checkResult.output.includes('No files found to lint')) {
+      process.stdout.write(JSON.stringify({ decision: 'allow' }));
+      return;
+    }
+    if (!checkResult.success && checkResult.output && checkResult.output.includes('error')) {
       const response = {
         decision: 'continue',
         reason: `[oxlint] Lint errors detected. Please fix before completing:\n${checkResult.output.slice(0, 500)}`
@@ -105,10 +121,9 @@ async function main() {
   if (targetFile) {
     if (isJsTsFile(targetFile)) {
       const normalizedPath = path.normalize(targetFile);
-      // Run autofix on specific file if it exists
       if (fs.existsSync(normalizedPath)) {
-        runCommand(`npx -y oxlint@latest --fix "${normalizedPath}"`);
-        const checkResult = runCommand(`npx -y oxlint@latest "${normalizedPath}"`);
+        runOxlint(['--fix', normalizedPath]);
+        const checkResult = runOxlint([normalizedPath]);
         if (!checkResult.success || checkResult.output.trim().length > 0) {
           process.stderr.write(`\n[oxlint] Issues found in ${normalizedPath}:\n${checkResult.output}\n`);
         }
@@ -116,8 +131,8 @@ async function main() {
     }
   } else {
     // Whole workspace check & fix
-    runCommand('npx -y oxlint@latest --fix');
-    const checkResult = runCommand('npx -y oxlint@latest');
+    runOxlint(['--fix']);
+    const checkResult = runOxlint();
     if (!checkResult.success || checkResult.output.trim().length > 0) {
       process.stderr.write(`\n[oxlint] Workspace lint issues:\n${checkResult.output}\n`);
     }

@@ -76,16 +76,20 @@ const __dirname = path.dirname(__filename);
 
 // Port and DB settings
 const PORT = process.env.PORT || 3001;
-const DB_PATH = path.resolve(
-  __dirname,
-  process.env.NODE_ENV === "test"
-    ? `../../jobs.test.${process.pid}.db`
-    : process.env.JOBS_DB_PATH || "../../jobs.db",
-);
+function getDbPath(): string {
+  return path.resolve(
+    __dirname,
+    process.env.NODE_ENV === "test"
+      ? `../../jobs.test.${process.pid}.db`
+      : process.env.JOBS_DB_PATH || "../../jobs.db",
+  );
+}
+
+let DB_PATH = getDbPath();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "10mb" }));
 
 // Pure backend API server only - do not serve frontend assets
 app.use((req, res, next) => {
@@ -201,7 +205,12 @@ function oversizedFieldsError(fields: string[]) {
 }
 
 // Initialize database
-async function initDb() {
+async function initDb(customDbPath?: string) {
+  if (customDbPath) {
+    DB_PATH = customDbPath;
+  } else {
+    DB_PATH = getDbPath();
+  }
   db = await open({
     filename: DB_PATH,
     driver: sqlite3.Database,
@@ -653,12 +662,17 @@ app.post("/api/codex/responses", async (req, res) => {
     }
 
     const reader = upstream.body.getReader();
+    let clientGone = false;
+    res.on("close", () => {
+      clientGone = true;
+      void reader.cancel().catch(() => {});
+    });
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done || clientGone) break;
       res.write(Buffer.from(value));
     }
-    res.end();
+    if (!clientGone) res.end();
   } catch (error: any) {
     console.error("Error streaming Codex response:", error);
     if (!res.headersSent) {
@@ -895,6 +909,11 @@ wss.on("connection", (ws: WebSocket) => {
     }
   });
 
+  ws.on("error", (err) => {
+    console.error("Backend: WebSocket error:", err);
+    clearInterval(heartbeatInterval);
+  });
+
   ws.on("close", () => {
     console.log("Backend: client disconnected");
     clearInterval(heartbeatInterval);
@@ -961,4 +980,4 @@ if (process.argv[1] && process.argv[1].endsWith("server.ts")) {
   start();
 }
 
-export { app, server, initDb, db, DB_PATH };
+export { app, server, initDb, db, DB_PATH, getDbPath };

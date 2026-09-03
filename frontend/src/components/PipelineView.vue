@@ -21,6 +21,7 @@ const pointerDragApp = ref<JobApplication | null>(null);
 const pointerDragPosition = ref({ x: 0, y: 0 });
 const pointerDragStart = ref({ x: 0, y: 0 });
 const pointerDragStarted = ref(false);
+const suppressClick = ref(false);
 let pointerDragPointerId: number | null = null;
 
 // Mobile active stage selection
@@ -165,6 +166,7 @@ function onPointerUp(event: PointerEvent) {
 
   if (pointerDragStarted.value) {
     event.preventDefault();
+    suppressClick.value = true;
     const dropColumn = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-stage]');
     const stage = dropColumn?.dataset.stage as Stage | undefined;
     if (stage && pointerDragApp.value.stage !== stage) {
@@ -173,6 +175,14 @@ function onPointerUp(event: PointerEvent) {
   }
 
   resetPointerDrag();
+}
+
+function onCardClick(app: JobApplication) {
+  if (suppressClick.value) {
+    suppressClick.value = false;
+    return;
+  }
+  emit('select', app);
 }
 
 function onPointerCancel(event: PointerEvent) {
@@ -244,7 +254,7 @@ function onPointerCancel(event: PointerEvent) {
             tabindex="0"
             role="button"
             :aria-label="`View details for ${app.company}, role ${app.role}`"
-            @click="emit('select', app)"
+            @click="onCardClick(app)"
             @keydown.enter.prevent="emit('select', app)"
             @keydown.space.prevent="emit('select', app)"
           >

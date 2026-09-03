@@ -968,7 +968,6 @@ async function processMessage(
       status: "failed",
       error: error.message,
     });
-    throw error;
   }
 }
 
@@ -987,6 +986,10 @@ export async function runEmailAutomationScan(
   const accessToken = await getValidAccessToken(db);
   if (!accessToken) {
     throw new Error("Gmail is not connected or token refresh is unavailable");
+  }
+
+  if (currentScanAbortController) {
+    throw new Error("An email automation scan is already running");
   }
 
   await setSetting(db, "last_scan_at", nowIso());
@@ -1411,7 +1414,7 @@ export async function getAutomationStatus(
     hasRefreshToken: Boolean(token?.refreshToken),
     expiresAt: token?.expiresAt,
     nimConfigured: isNimConfigured() || Boolean(nimApiKey),
-    nimApiKey: nimApiKey || "",
+    nimApiKey: nimApiKey ? `${"*".repeat(8)}${nimApiKey.slice(-4)}` : "",
     schedulerEnabled: pollingEnabled,
     pollIntervalMs: POLL_INTERVAL_MS,
     lastScanAt,

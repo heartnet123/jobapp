@@ -1,6 +1,4 @@
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const pdf = require('pdf-parse');
+import { PDFParse } from 'pdf-parse';
 
 export interface ParsedResumeInfo {
   fullName: string;
@@ -30,8 +28,13 @@ export async function extractTextFromPdf(base64Data: string): Promise<string> {
   const base64Clean = base64Data.replace(/^data:application\/pdf;base64,/, '');
   const buffer = Buffer.from(base64Clean, 'base64');
   
-  const parsedData = await pdf(buffer);
-  return parsedData.text || '';
+  const parser = new PDFParse({ data: buffer });
+  try {
+    const parsedData = await parser.getText();
+    return parsedData.text || '';
+  } finally {
+    await parser.destroy();
+  }
 }
 
 /**
