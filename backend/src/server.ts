@@ -45,7 +45,7 @@ for (const envPath of [
     console.warn("Failed to load .env file:", err);
   }
 }
-import type { JobApplication } from "@jobapp/shared";
+import type { JobApplication, ApplicationExport } from "@jobapp/shared";
 import { STAGES, WORK_MODES } from "@jobapp/shared";
 import { extractTextFromPdf, parseResumeText } from "./resumeParser";
 import {
@@ -264,29 +264,232 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+function mapRowToApplication(row: any): JobApplication {
+  return {
+    id: row.id,
+    company: row.company,
+    role: row.role,
+    stage: row.stage,
+    date: row.date,
+    salary: row.salary,
+    location: row.location,
+    workMode: row.workMode,
+    url: row.url,
+    notes: row.notes,
+    reminderDate: row.reminderDate || undefined,
+    checklist: typeof row.checklist === "string" ? JSON.parse(row.checklist || "[]") : (row.checklist || []),
+    contacts: typeof row.contacts === "string" ? JSON.parse(row.contacts || "[]") : (row.contacts || []),
+    history: typeof row.history === "string" ? JSON.parse(row.history || "[]") : (row.history || []),
+  };
+}
+
 // GET /api/applications - Get all applications
 app.get("/api/applications", async (req, res) => {
   try {
     const rows = await db.all("SELECT * FROM applications");
-    const applications = rows.map((row) => ({
-      id: row.id,
-      company: row.company,
-      role: row.role,
-      stage: row.stage,
-      date: row.date,
-      salary: row.salary,
-      location: row.location,
-      workMode: row.workMode,
-      url: row.url,
-      notes: row.notes,
-      reminderDate: row.reminderDate || undefined,
-      checklist: JSON.parse(row.checklist),
-      contacts: JSON.parse(row.contacts),
-      history: JSON.parse(row.history),
-    }));
-    res.json(applications);
+    res.json(rows.map(mapRowToApplication));
   } catch (error: any) {
     console.error("Error fetching applications:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+function escapeCsvCell(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  const str = String(val);
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function formatApplicationsCsv(apps: JobApplication[]): string {
+  const headers = [
+    "id",
+    "company",
+    "role",
+    "stage",
+    "date",
+    "salary",
+    "location",
+    "workMode",
+    "url",
+    "reminderDate",
+    "notes",
+    "checklistCount",
+    "contactsCount",
+    "historyCount",
+  ];
+  const rows = apps.map((app) =>
+    [
+      escapeCsvCell(app.id),
+      escapeCsvCell(app.company),
+      escapeCsvCell(app.role),
+      escapeCsvCell(app.stage),
+      escapeCsvCell(app.date),
+      escapeCsvCell(app.salary),
+      escapeCsvCell(app.location),
+      escapeCsvCell(app.workMode),
+      escapeCsvCell(app.url),
+      escapeCsvCell(app.reminderDate || ""),
+      escapeCsvCell(app.notes),
+      escapeCsvCell(app.checklist?.length || 0),
+      escapeCsvCell(app.contacts?.length || 0),
+      escapeCsvCell(app.history?.length || 0),
+    ].join(","),
+  );
+  return [headers.join(","), ...rows].join("\r\n");
+}
+
+// GET /api/export - Export applications as JSON envelope or RFC 4180 CSV
+app.get("/api/export", async (req, res) => {
+  try {
+    const format = req.query.format === "csv" ? "csv" : "json";
+    const rows = await db.all("SELECT * FROM applications");
+    const applications = rows.map(mapRowToApplication);
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    if (format === "csv") {
+      const csv = formatApplicationsCsv(applications);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="jobapp-export-${dateStr}.csv"`,
+      );
+      return res.send(csv);
+    }
+
+    const payload: ApplicationExport = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      count: applications.length,
+      applications,
+    };
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="jobapp-export-${dateStr}.json"`,
+    );
+    res.json(payload);
+  } catch (error: any) {
+    console.error("Error exporting data:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/import - Import applications atomically from JSON with duplicate resolution
+app.post("/api/import", async (req, res) => {
+  try {
+    const body = req.body;
+    const rawApps = Array.isArray(body?.applications) ? body.applications : null;
+    const conflictPolicy: "skip" | "overwrite" =
+      body?.conflictPolicy === "overwrite" ? "overwrite" : "skip";
+
+    if (!rawApps || rawApps.length === 0) {
+      return res.status(400).json({ error: "Missing applications array in export envelope" });
+    }
+
+    for (let i = 0; i < rawApps.length; i++) {
+      const item = rawApps[i] as Record<string, unknown>;
+      const missing = missingRequiredStringFields(item, APPLICATION_REQUIRED_FIELDS);
+      if (missing.length > 0) {
+        return res.status(400).json({
+          error: `Record [${i}] (${item.id || "unknown"}) missing required fields: ${missing.join(", ")}`,
+        });
+      }
+      const invalid = invalidApplicationEnumFields(item);
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          error: `Record [${i}] (${item.id}) has invalid enum values: ${invalid.join(", ")}`,
+        });
+      }
+      const oversized = oversizedApplicationStringFields(item);
+      if (oversized.length > 0) {
+        return res.status(400).json({
+          error: `Record [${i}] (${item.id}) has oversized fields: ${oversized.join(", ")}`,
+        });
+      }
+      if (item.checklist !== undefined && !Array.isArray(item.checklist)) {
+        return res.status(400).json({ error: `Record [${i}] (${item.id}) checklist must be an array` });
+      }
+      if (item.contacts !== undefined && !Array.isArray(item.contacts)) {
+        return res.status(400).json({ error: `Record [${i}] (${item.id}) contacts must be an array` });
+      }
+      if (item.history !== undefined && !Array.isArray(item.history)) {
+        return res.status(400).json({ error: `Record [${i}] (${item.id}) history must be an array` });
+      }
+    }
+
+    let inserted = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    await db.run("BEGIN TRANSACTION");
+    try {
+      for (const raw of rawApps) {
+        const app = raw as JobApplication;
+        const appValues = [
+          app.company,
+          app.role,
+          app.stage,
+          app.date,
+          app.salary,
+          app.location,
+          app.workMode,
+          app.url,
+          app.notes,
+          app.reminderDate || null,
+          JSON.stringify(app.checklist || []),
+          JSON.stringify(app.contacts || []),
+          JSON.stringify(app.history || []),
+        ];
+
+        if (conflictPolicy === "skip") {
+          const insertRes = await db.run(
+            `INSERT OR IGNORE INTO applications (
+              company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history, id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [...appValues, app.id],
+          );
+          if ((insertRes.changes ?? 0) > 0) {
+            inserted++;
+          } else {
+            skipped++;
+          }
+        } else {
+          const updateRes = await db.run(
+            `UPDATE applications SET
+              company = ?, role = ?, stage = ?, date = ?, salary = ?, location = ?, workMode = ?, url = ?, notes = ?, reminderDate = ?, checklist = ?, contacts = ?, history = ?
+             WHERE id = ?`,
+            [...appValues, app.id],
+          );
+          if ((updateRes.changes ?? 0) > 0) {
+            updated++;
+          } else {
+            await db.run(
+              `INSERT INTO applications (
+                company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history, id
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [...appValues, app.id],
+            );
+            inserted++;
+          }
+        }
+      }
+      await db.run("COMMIT");
+    } catch (txErr) {
+      await db.run("ROLLBACK");
+      throw txErr;
+    }
+
+    res.json({
+      total: rawApps.length,
+      inserted,
+      updated,
+      skipped,
+    });
+  } catch (error: any) {
+    console.error("Error importing data:", error);
     res.status(500).json({ error: error.message });
   }
 });

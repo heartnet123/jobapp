@@ -492,4 +492,132 @@ describe('SQLite Daemon Integration Tests', () => {
     const all = await getRes.json() as any[];
     expect(all).toHaveLength(0);
   });
+
+  it('should export applications as JSON envelope (GET /api/export)', async () => {
+    // Ensure testApp is in applications table
+    await fetch(`http://localhost:${TEST_PORT}/api/applications`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(testApp),
+    });
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/export?format=json`);
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.version).toBe(1);
+    expect(typeof data.exportedAt).toBe('string');
+    expect(data.count).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(data.applications)).toBe(true);
+    const exportedApp = data.applications.find((a: any) => a.id === testApp.id);
+    expect(exportedApp).toBeDefined();
+    expect(exportedApp.company).toBe(testApp.company);
+  });
+
+  it('should export applications as CSV (GET /api/export?format=csv)', async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/export?format=csv`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/csv');
+    const text = await res.text();
+    expect(text).toContain('id,company,role,stage');
+    expect(text).toContain(testApp.id);
+    expect(text).toContain(testApp.company);
+  });
+
+  it('should import applications with skip duplicate resolution (POST /api/import)', async () => {
+    const importPayload = {
+      conflictPolicy: 'skip',
+      applications: [
+        {
+          ...testApp,
+          company: 'Should Not Overwrite In Skip Mode',
+        },
+        {
+          id: 'APP-IMPORT-NEW-001',
+          company: 'Brand New Import Co',
+          role: 'Fullstack Dev',
+          stage: 'Applied',
+          date: '2026-09-08',
+          salary: '$130,000',
+          location: 'Remote',
+          workMode: 'Remote',
+          url: 'https://example.com/imported',
+          notes: 'Imported via test',
+          checklist: [],
+          contacts: [],
+          history: [],
+        },
+      ],
+    };
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(importPayload),
+    });
+
+    expect(res.status).toBe(200);
+    const summary = await res.json() as any;
+    expect(summary.total).toBe(2);
+    expect(summary.inserted).toBe(1);
+    expect(summary.skipped).toBe(1);
+    expect(summary.updated).toBe(0);
+
+    // Verify existing app was not overwritten
+    const checkRes = await fetch(`http://localhost:${TEST_PORT}/api/applications`);
+    const all = await checkRes.json() as any[];
+    const original = all.find((a) => a.id === testApp.id);
+    expect(original.company).toBe(testApp.company);
+  });
+
+  it('should import applications with overwrite duplicate resolution (POST /api/import)', async () => {
+    const importPayload = {
+      conflictPolicy: 'overwrite',
+      applications: [
+        {
+          ...testApp,
+          company: 'Updated Via Overwrite Import',
+        },
+      ],
+    };
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(importPayload),
+    });
+
+    expect(res.status).toBe(200);
+    const summary = await res.json() as any;
+    expect(summary.updated).toBe(1);
+    expect(summary.skipped).toBe(0);
+
+    // Verify app was updated
+    const checkRes = await fetch(`http://localhost:${TEST_PORT}/api/applications`);
+    const all = await checkRes.json() as any[];
+    const updated = all.find((a) => a.id === testApp.id);
+    expect(updated.company).toBe('Updated Via Overwrite Import');
+  });
+
+  it('should reject invalid import payload and rollback (POST /api/import)', async () => {
+    const invalidPayload = {
+      conflictPolicy: 'skip',
+      applications: [
+        {
+          id: 'INVALID-APP',
+          // missing company & role
+          stage: 'InvalidStage',
+        },
+      ],
+    };
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(invalidPayload),
+    });
+
+    expect(res.status).toBe(400);
+    const errData = await res.json() as any;
+    expect(errData.error).toBeDefined();
+  });
 });

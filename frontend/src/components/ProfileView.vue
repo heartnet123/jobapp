@@ -47,6 +47,104 @@ function clearExtractedFields() {
   };
 }
 
+// Data Export & Import state
+const importFileInput = ref<HTMLInputElement | null>(null);
+const importModalOpen = ref(false);
+const importFileParsed = ref<{
+  fileName: string;
+  count: number;
+  applications: any[];
+} | null>(null);
+const importConflictPolicy = ref<'skip' | 'overwrite'>('skip');
+const isImporting = ref(false);
+const importFeedback = ref<{ type: 'success' | 'error'; message: string } | null>(null);
+
+function triggerExport(format: 'json' | 'csv') {
+  window.open(`/api/export?format=${format}`, '_blank');
+}
+
+function triggerImportFile() {
+  if (importFileInput.value) {
+    importFileInput.value.value = '';
+    importFileInput.value.click();
+  }
+}
+
+async function handleImportFileChange(e: Event) {
+  const target = e.target as HTMLInputElement;
+  const file = target.files?.[0];
+  if (!file) return;
+
+  importFeedback.value = null;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const apps = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.applications)
+        ? parsed.applications
+        : null;
+
+    if (!apps || apps.length === 0) {
+      importFeedback.value = {
+        type: 'error',
+        message: 'No valid job applications found in this JSON file.',
+      };
+      return;
+    }
+
+    importFileParsed.value = {
+      fileName: file.name,
+      count: apps.length,
+      applications: apps,
+    };
+    importModalOpen.value = true;
+  } catch (err: any) {
+    importFeedback.value = {
+      type: 'error',
+      message: `Invalid JSON file: ${err.message || err}`,
+    };
+  }
+}
+
+async function executeImport() {
+  if (!importFileParsed.value) return;
+  isImporting.value = true;
+  try {
+    const res = await fetch('/api/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conflictPolicy: importConflictPolicy.value,
+        applications: importFileParsed.value.applications,
+      }),
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(errData.error || 'Import failed');
+    }
+    const result = await res.json();
+    importFeedback.value = {
+      type: 'success',
+      message: `Import complete: ${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped.`,
+    };
+    importModalOpen.value = false;
+    importFileParsed.value = null;
+  } catch (err: any) {
+    importFeedback.value = {
+      type: 'error',
+      message: err.message || 'Failed to import applications',
+    };
+  } finally {
+    isImporting.value = false;
+  }
+}
+
+function cancelImport() {
+  importModalOpen.value = false;
+  importFileParsed.value = null;
+}
+
 // Load profiles
 async function fetchProfiles() {
   try {
@@ -598,6 +696,86 @@ onMounted(() => {
           </div>
         </div>
       </section>
+    </div>
+
+    <!-- Data Portability & Backup Card -->
+    <section class="data-backup-card">
+      <div class="card-header">
+        <div class="backup-header-title">
+          <iconify-icon icon="solar:database-linear" class="section-icon"></iconify-icon>
+          <div>
+            <h2>Data Portability &amp; Backup</h2>
+            <p class="section-desc">Export applications to JSON/CSV or restore via Data Import.</p>
+          </div>
+        </div>
+        <div class="backup-actions">
+          <button type="button" class="action-btn export-btn" @click="triggerExport('json')">
+            <iconify-icon icon="solar:document-text-linear"></iconify-icon>
+            Export JSON
+          </button>
+          <button type="button" class="action-btn export-btn" @click="triggerExport('csv')">
+            <iconify-icon icon="solar:file-spreadsheet-linear"></iconify-icon>
+            Export CSV
+          </button>
+          <button type="button" class="action-btn import-btn" @click="triggerImportFile">
+            <iconify-icon icon="solar:upload-square-linear"></iconify-icon>
+            Import JSON
+          </button>
+          <input
+            ref="importFileInput"
+            type="file"
+            accept=".json"
+            class="hidden-file-input"
+            @change="handleImportFileChange"
+          />
+        </div>
+      </div>
+
+      <Transition name="fade">
+        <div v-if="importFeedback" class="backup-feedback" :class="importFeedback.type">
+          <iconify-icon :icon="importFeedback.type === 'success' ? 'solar:check-circle-bold-duotone' : 'solar:danger-triangle-bold-duotone'"></iconify-icon>
+          <span>{{ importFeedback.message }}</span>
+        </div>
+      </Transition>
+    </section>
+
+    <!-- Import Confirmation Modal -->
+    <div v-if="importModalOpen" class="import-modal-overlay">
+      <div class="import-modal">
+        <div class="modal-header">
+          <h3>Confirm Data Import</h3>
+          <button type="button" class="close-btn" @click="cancelImport">
+            <iconify-icon icon="solar:close-circle-linear"></iconify-icon>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p>
+            File <strong>{{ importFileParsed?.fileName }}</strong> contains
+            <strong>{{ importFileParsed?.count }}</strong> applications.
+          </p>
+
+          <div class="policy-selector">
+            <span class="policy-label">Conflict Policy:</span>
+            <label class="radio-option">
+              <input type="radio" value="skip" v-model="importConflictPolicy" />
+              <span><strong>Skip existing</strong> (Keep current records unchanged)</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" value="overwrite" v-model="importConflictPolicy" />
+              <span><strong>Overwrite existing</strong> (Update current records with imported data)</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="cancel-btn" @click="cancelImport" :disabled="isImporting">
+            Cancel
+          </button>
+          <button type="button" class="save-btn" @click="executeImport" :disabled="isImporting">
+            <span v-if="isImporting">Importing...</span>
+            <span v-else>Confirm &amp; Import</span>
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -1194,5 +1372,182 @@ onMounted(() => {
 .text-review-editor::-webkit-scrollbar-thumb {
   background: var(--neutral-800);
   border-radius: 3px;
+}
+
+/* Data Portability & Backup Card */
+.data-backup-card {
+  padding: 1.5rem;
+  background: rgba(17, 17, 17, 0.4);
+  border: 1px solid var(--neutral-800);
+  border-radius: var(--radius-lg);
+  backdrop-filter: blur(10px);
+}
+
+.backup-header-title {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.export-btn {
+  color: var(--neutral-200);
+  background: rgba(38, 38, 38, 0.5);
+  border: 1px solid var(--neutral-700);
+}
+
+.export-btn:hover {
+  color: var(--neutral-50);
+  background: rgba(52, 52, 52, 0.7);
+  border-color: var(--neutral-500);
+}
+
+.import-btn {
+  color: #fff;
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+}
+
+.import-btn:hover {
+  background: rgba(99, 102, 241, 0.35);
+  border-color: rgba(99, 102, 241, 0.6);
+}
+
+.backup-feedback {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+}
+
+.backup-feedback.success {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.backup-feedback.error {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+/* Import Modal */
+.import-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.import-modal {
+  width: 100%;
+  max-width: 500px;
+  background: #171717;
+  border: 1px solid var(--neutral-700);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--neutral-800);
+}
+
+.modal-header h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--neutral-100);
+  margin: 0;
+}
+
+.close-btn {
+  background: transparent;
+  border: none;
+  color: var(--neutral-400);
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+
+.close-btn:hover {
+  color: var(--neutral-100);
+}
+
+.modal-body {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  font-size: 0.9rem;
+  color: var(--neutral-300);
+}
+
+.policy-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.policy-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--neutral-400);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.radio-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(23, 23, 23, 0.6);
+  border: 1px solid var(--neutral-800);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.radio-option input {
+  margin-top: 0.2rem;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--neutral-800);
+  background: rgba(17, 17, 17, 0.4);
 }
 </style>
