@@ -98,12 +98,17 @@ onMounted(async () => {
   notificationInterval = window.setInterval(() => {
     triggerBrowserNotifications();
   }, 5 * 60 * 1000);
+
+  document.addEventListener('click', handleDocumentClick);
+  document.addEventListener('keydown', handleNotificationKeydown);
 });
 
 onUnmounted(() => {
   if (notificationInterval) {
     clearInterval(notificationInterval);
   }
+  document.removeEventListener('click', handleDocumentClick);
+  document.removeEventListener('keydown', handleNotificationKeydown);
 });
 
 async function saveApplication(appData: JobApplication, isNew: boolean) {
@@ -455,6 +460,20 @@ function dismissNotificationBar() {
   sessionStorage.setItem('job_tracker_dismissed_reminders_hash', currentDueHash.value);
 }
 
+const notificationContainerRef = ref<HTMLElement | null>(null);
+
+function handleDocumentClick(e: MouseEvent) {
+  if (isNotificationsOpen.value && notificationContainerRef.value && !notificationContainerRef.value.contains(e.target as Node)) {
+    isNotificationsOpen.value = false;
+  }
+}
+
+function handleNotificationKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && isNotificationsOpen.value) {
+    isNotificationsOpen.value = false;
+  }
+}
+
 function toggleNotificationsDropdown() {
   isNotificationsOpen.value = !isNotificationsOpen.value;
 }
@@ -622,7 +641,7 @@ function triggerBrowserNotifications() {
           </label>
 
           <!-- Notifications Bell & Dropdown Panel -->
-          <div class="notification-container">
+          <div ref="notificationContainerRef" class="notification-container">
             <button
               type="button"
               class="bell-btn"
@@ -854,7 +873,6 @@ function triggerBrowserNotifications() {
   justify-content: center;
   color: var(--color-warning);
   font-size: 0.95rem;
-  animation: pulse-bell 2s infinite ease-in-out;
 }
 
 /* -------------------------------------------------------------
@@ -946,7 +964,8 @@ function triggerBrowserNotifications() {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: slide-in-dropdown 200ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top right;
+  animation: slide-in-dropdown 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes slide-in-dropdown {
@@ -1154,6 +1173,11 @@ function triggerBrowserNotifications() {
   outline: none;
 }
 
+.toggle-switch-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 .toggle-switch-btn.active {
   background: #10b981; /* Green toggle active */
   border-color: rgba(16, 185, 129, 0.2);
@@ -1191,29 +1215,28 @@ function triggerBrowserNotifications() {
 }
 
 /* Toast high-fidelity micro-interactions & transitions */
-.toast-list-enter-active,
+.toast-list-enter-active {
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), opacity 180ms ease-out;
+}
+
 .toast-list-leave-active {
-  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.toast-list-enter-from {
-  opacity: 0;
-  transform: translateY(1rem) scale(0.95);
-}
-
-.toast-list-leave-to {
-  opacity: 0;
-  transform: translateX(3rem) scale(0.95);
-}
-
-/* absolute position is required on exit to allow move transition to perform smoothly */
-.toast-list-leave-active {
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1), opacity 150ms ease-out;
   position: absolute !important;
   right: 0;
 }
 
+.toast-list-enter-from {
+  opacity: 0;
+  transform: translateY(0.75rem) scale(0.96);
+}
+
+.toast-list-leave-to {
+  opacity: 0;
+  transform: translateX(2rem) scale(0.96);
+}
+
 .toast-list-move {
-  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Bullet markers for location work types in table view */
@@ -1338,7 +1361,7 @@ function triggerBrowserNotifications() {
 }
 
 .bell-pulse-icon {
-  animation: pulse-bell 2s infinite ease-in-out;
+  color: #f59e0b;
 }
 
 .banner-message {
@@ -1372,8 +1395,17 @@ function triggerBrowserNotifications() {
   border-radius: 0.375rem;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: all 150ms ease;
+  transition: background-color 150ms var(--transition-ease), transform 80ms var(--transition-ease), box-shadow 150ms var(--transition-ease);
   outline: none;
+}
+
+.banner-action-btn:active {
+  transform: scale(0.97);
+}
+
+.banner-action-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .banner-action-btn.primary {
@@ -1385,6 +1417,10 @@ function triggerBrowserNotifications() {
   background: #d97706;
   transform: translateY(-1px);
   box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
+}
+
+.banner-action-btn.primary:active {
+  transform: scale(0.97);
 }
 
 .banner-dismiss-btn {

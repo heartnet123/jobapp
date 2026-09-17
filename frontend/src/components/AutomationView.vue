@@ -739,9 +739,9 @@ onUnmounted(() => {
             </div>
         </div>
 
-        <p v-if="message" class="automation-message">{{ message }}</p>
-        <p v-if="status?.lastScanError" class="automation-message error">
-            {{ status.lastScanError }}
+        <p role="status" class="automation-message" v-show="message">{{ message }}</p>
+        <p v-if="status?.lastScanError" role="alert" class="automation-message error">
+            {{ status.lastScanError }} Check the connection settings above, then run the scan again.
         </p>
 
         <div class="queue-section">
@@ -752,7 +752,7 @@ onUnmounted(() => {
 
             <div v-if="pendingQueue.length === 0" class="empty-state-panel">
                 <iconify-icon icon="solar:inbox-line-linear"></iconify-icon>
-                <span>No pending email decisions.</span>
+                <span>No emails need review. Run a scan to check for job updates.</span>
             </div>
 
             <article
@@ -804,9 +804,9 @@ onUnmounted(() => {
                         ></iconify-icon>
                         <span>Ignore</span>
                     </button>
-                    <label class="link-control">
-                        <select v-model="linkTargets[item.id]">
-                            <option value="">Link job</option>
+                    <div class="link-control">
+                        <select v-model="linkTargets[item.id]" :aria-label="`Application to link for ${item.decision.company || item.evidence.subject}`">
+                            <option value="">Select job to link...</option>
                             <option
                                 v-for="application in props.applications"
                                 :key="application.id"
@@ -819,6 +819,7 @@ onUnmounted(() => {
                         <button
                             type="button"
                             class="icon-btn"
+                            aria-label="Link selected application"
                             :disabled="loading || !linkTargets[item.id]"
                             @click="linkItem(item)"
                         >
@@ -826,7 +827,7 @@ onUnmounted(() => {
                                 icon="solar:link-linear"
                             ></iconify-icon>
                         </button>
-                    </label>
+                    </div>
                 </div>
             </article>
         </div>
@@ -864,7 +865,7 @@ onUnmounted(() => {
 
 .status-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.75rem;
 }
 
@@ -1278,15 +1279,8 @@ onUnmounted(() => {
     transition: width 0.3s ease-out;
 }
 
-@keyframes pulse {
-    0% { opacity: 0.6; transform: scale(1); }
-    50% { opacity: 1; transform: scale(1.1); }
-    100% { opacity: 0.6; transform: scale(1); }
-}
-
 .pulse-icon {
     color: #10b981;
-    animation: pulse 1.8s infinite ease-in-out;
     font-size: 1.1rem;
 }
 

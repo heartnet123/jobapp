@@ -165,7 +165,7 @@ function handleSort(key: 'company' | 'stage' | 'location' | 'salary' | 'date') {
         <div class="mobile-date">{{ application.date }}</div>
 
         <div class="action-column action-cell">
-          <button type="button" aria-label="More actions" @click.stop="openEditEntry(application)">
+          <button type="button" :aria-label="`Edit ${application.company} application`" @click.stop="openEditEntry(application)">
             <iconify-icon icon="solar:menu-dots-bold"></iconify-icon>
           </button>
         </div>
@@ -193,7 +193,6 @@ function handleSort(key: 'company' | 'stage' | 'location' | 'salary' | 'date') {
   justify-content: center;
   color: var(--color-warning);
   font-size: 0.95rem;
-  animation: pulse-bell 2s infinite ease-in-out;
 }
 
 /* Premium Sortable Headers Styling */
@@ -210,10 +209,14 @@ function handleSort(key: 'company' | 'stage' | 'location' | 'salary' | 'date') {
   font-weight: inherit;
   text-transform: inherit;
   cursor: pointer;
-  transition: color 150ms ease;
+  transition: color 150ms ease, transform 80ms ease;
   width: fit-content;
   text-align: left;
   outline: none;
+}
+
+.header-sort-btn:active {
+  transform: scale(0.97);
 }
 
 .header-sort-btn:hover {
@@ -263,20 +266,4 @@ function handleSort(key: 'company' | 'stage' | 'location' | 'salary' | 'date') {
 .mode-bullet.remote { background-color: #10b981; }
 .mode-bullet.hybrid { background-color: #f59e0b; }
 .mode-bullet.on-site { background-color: #a3a3a3; }
-
-@keyframes pulse-bell {
-  0% {
-    transform: scale(1);
-    opacity: 0.8;
-  }
-  50% {
-    transform: scale(1.15);
-    opacity: 1;
-    filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.6));
-  }
-  100% {
-    transform: scale(1);
-    opacity: 0.8;
-  }
-}
 </style>

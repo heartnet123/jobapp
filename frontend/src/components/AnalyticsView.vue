@@ -107,7 +107,6 @@ const donutAriaLabel = computed(() => {
           <span class="stat-label">Total Tracked</span>
           <span class="stat-value">{{ total }}</span>
         </div>
-        <div class="stat-badge">Active</div>
       </div>
 
       <div class="stat-card">
@@ -115,11 +114,9 @@ const donutAriaLabel = computed(() => {
           <iconify-icon icon="solar:calendar-mark-linear"></iconify-icon>
         </div>
         <div class="stat-info">
-          <span class="stat-label">Interview Rate</span>
+          <span class="stat-label">Interview or Offer</span>
           <span class="stat-value">{{ stats.interviewRate }}%</span>
         </div>
-        <div class="stat-badge success" v-if="stats.interviewRate >= 40">Strong</div>
-        <div class="stat-badge" v-else>Progress</div>
       </div>
 
       <div class="stat-card">
@@ -127,11 +124,9 @@ const donutAriaLabel = computed(() => {
           <iconify-icon icon="solar:cup-bold-linear"></iconify-icon>
         </div>
         <div class="stat-info">
-          <span class="stat-label">Offer Rate</span>
+          <span class="stat-label">In Offer</span>
           <span class="stat-value">{{ stats.offerRate }}%</span>
         </div>
-        <div class="stat-badge emerald" v-if="stats.offerRate > 0">Winner</div>
-        <div class="stat-badge" v-else>Searching</div>
       </div>
 
       <div class="stat-card">
@@ -139,10 +134,9 @@ const donutAriaLabel = computed(() => {
           <iconify-icon icon="solar:close-circle-linear"></iconify-icon>
         </div>
         <div class="stat-info">
-          <span class="stat-label">Rejection Rate</span>
+          <span class="stat-label">Rejected</span>
           <span class="stat-value">{{ stats.rejectionRate }}%</span>
         </div>
-        <div class="stat-badge warning">Normal</div>
       </div>
     </div>
 
@@ -203,14 +197,15 @@ const donutAriaLabel = computed(() => {
       <!-- Funnel Progress -->
       <div class="analytics-card funnel-card">
         <header class="card-header">
-          <h3>Application Pipeline Funnel</h3>
+          <h3>Current Pipeline Snapshot</h3>
+          <p class="snapshot-note">Based on current stages, not past interview or take-home activity.</p>
         </header>
 
         <div class="funnel-container" v-if="total > 0">
           <!-- Applied -->
           <div class="funnel-row">
             <div class="funnel-label-group">
-              <span class="funnel-step">Applied</span>
+              <span class="funnel-step">All applications</span>
               <span class="funnel-count">{{ stats.applied + stats.takehome + stats.interview + stats.offer + stats.rejected }}</span>
             </div>
             <div class="funnel-bar-outer">
@@ -222,7 +217,7 @@ const donutAriaLabel = computed(() => {
           <!-- Take-home -->
           <div class="funnel-row">
             <div class="funnel-label-group">
-              <span class="funnel-step">Take-homes</span>
+              <span class="funnel-step">Take-home, Interview or Offer</span>
               <span class="funnel-count">{{ stats.takehome + stats.interview + stats.offer }}</span>
             </div>
             <div class="funnel-bar-outer">
@@ -239,7 +234,7 @@ const donutAriaLabel = computed(() => {
           <!-- Interview -->
           <div class="funnel-row">
             <div class="funnel-label-group">
-              <span class="funnel-step">Interviews</span>
+              <span class="funnel-step">Interview or Offer</span>
               <span class="funnel-count">{{ stats.interview + stats.offer }}</span>
             </div>
             <div class="funnel-bar-outer">
@@ -273,7 +268,7 @@ const donutAriaLabel = computed(() => {
 
         <div v-else class="empty-chart">
           <iconify-icon icon="solar:align-bottom-linear"></iconify-icon>
-          <span>Funnel charts populate dynamically as you progress.</span>
+          <span>Add an application to see your pipeline breakdown.</span>
         </div>
       </div>
     </div>
@@ -281,8 +276,8 @@ const donutAriaLabel = computed(() => {
     <!-- Active High-Value Opportunities -->
     <div class="hot-opportunities-section">
       <header class="card-header">
-        <h3>Hot Opportunities (Interviews &amp; Offers)</h3>
-        <span class="hot-count">{{ hotOpportunities.length }} High Interest</span>
+        <h3>Interviews &amp; Offers</h3>
+        <span class="hot-count">{{ hotOpportunities.length }} applications</span>
       </header>
 
       <div class="hot-grid" v-if="hotOpportunities.length > 0">
@@ -307,13 +302,20 @@ const donutAriaLabel = computed(() => {
 
       <div v-else class="hot-empty">
         <iconify-icon icon="solar:stars-line-duotone"></iconify-icon>
-        <span>No applications in Interview or Offer stages yet. Keep pushing!</span>
+        <span>No interviews or offers yet. Update application stages in Pipeline as you progress.</span>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.snapshot-note {
+  color: var(--neutral-400);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  margin: 0.5rem 0 0;
+}
+
 .analytics-dashboard {
   display: flex;
   flex-direction: column;
@@ -393,35 +395,6 @@ const donutAriaLabel = computed(() => {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.stat-badge {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  font-size: 0.65rem;
-  font-weight: 600;
-  color: #737373;
-  background: #171717;
-  padding: 0.15rem 0.4rem;
-  border-radius: 0.25rem;
-  border: 1px solid #262626;
-  text-transform: uppercase;
-}
-
-.stat-badge.success {
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.1);
-  border-color: rgba(59, 130, 246, 0.2);
-}
-
-.stat-badge.emerald {
-  color: #10b981;
-  background: rgba(16, 185, 129, 0.1);
-  border-color: rgba(16, 185, 129, 0.2);
-}
-
-.stat-badge.warning {
-  color: #a3a3a3;
-}
 
 .analytics-layout {
   display: grid;
@@ -557,7 +530,9 @@ const donutAriaLabel = computed(() => {
 }
 
 .funnel-label-group {
-  width: 7.5rem;
+  width: 10rem;
+  flex-shrink: 0;
+  gap: 0.5rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -661,17 +636,13 @@ const donutAriaLabel = computed(() => {
   color: #f5f5f5;
   font-weight: 600;
   font-size: 0.85rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .hot-role {
   color: #737373;
   font-size: 0.75rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .hot-salary {
@@ -746,6 +717,9 @@ const donutAriaLabel = computed(() => {
 }
 
 @media (max-width: 600px) {
+  .funnel-row { flex-wrap: wrap; }
+  .funnel-label-group { width: 100%; }
+  .hot-card, .hot-opportunities-section .card-header { flex-wrap: wrap; gap: 0.75rem; }
   .stat-grid {
     grid-template-columns: 1fr;
   }

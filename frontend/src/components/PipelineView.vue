@@ -281,53 +281,55 @@ function onPointerCancel(event: PointerEvent) {
             </div>
 
             <div class="card-footer">
-              <span class="card-salary" v-if="app.salary && app.salary !== 'TBD'">
-                {{ app.salary }}
-              </span>
-              <span class="card-salary tbd" v-else>TBD</span>
-
-              <!-- Checklist indicators -->
-              <div
-                v-if="app.checklist && app.checklist.length > 0"
-                class="card-checklist-badge"
-                :class="{ 'all-done': getCompletedChecklistCount(app).completed === getCompletedChecklistCount(app).total }"
-              >
-                <iconify-icon icon="solar:clipboard-list-linear"></iconify-icon>
-                <span>
-                  {{ getCompletedChecklistCount(app).completed }}/{{ getCompletedChecklistCount(app).total }}
+              <div class="card-footer-left">
+                <span class="card-salary" v-if="app.salary && app.salary !== 'TBD'">
+                  {{ app.salary }}
                 </span>
-              </div>
-            </div>
+                <span class="card-salary tbd" v-else>TBD</span>
 
-            <!-- Quick Move stage actions -->
-            <div class="card-actions" @click.stop>
-              <button
-                type="button"
-                class="quick-move-btn"
-                :disabled="stages.indexOf(stage) === 0"
-                @click="moveStage(app, 'prev')"
-                aria-label="Move stage backward"
-                title="Move backward"
-              >
-                <iconify-icon icon="solar:arrow-left-linear"></iconify-icon>
-              </button>
-              <button
-                type="button"
-                class="quick-move-btn"
-                :disabled="stages.indexOf(stage) === stages.length - 1"
-                @click="moveStage(app, 'next')"
-                aria-label="Move stage forward"
-                title="Move forward"
-              >
-                <iconify-icon icon="solar:arrow-right-linear"></iconify-icon>
-              </button>
+                <!-- Checklist indicators -->
+                <div
+                  v-if="app.checklist && app.checklist.length > 0"
+                  class="card-checklist-badge"
+                  :class="{ 'all-done': getCompletedChecklistCount(app).completed === getCompletedChecklistCount(app).total }"
+                >
+                  <iconify-icon icon="solar:clipboard-list-linear"></iconify-icon>
+                  <span>
+                    {{ getCompletedChecklistCount(app).completed }}/{{ getCompletedChecklistCount(app).total }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- Quick Move stage actions -->
+              <div class="card-actions" @click.stop>
+                <button
+                  type="button"
+                  class="quick-move-btn"
+                  :disabled="stages.indexOf(stage) === 0"
+                  @click="moveStage(app, 'prev')"
+                  aria-label="Move stage backward"
+                  title="Move backward"
+                >
+                  <iconify-icon icon="solar:arrow-left-linear"></iconify-icon>
+                </button>
+                <button
+                  type="button"
+                  class="quick-move-btn"
+                  :disabled="stages.indexOf(stage) === stages.length - 1"
+                  @click="moveStage(app, 'next')"
+                  aria-label="Move stage forward"
+                  title="Move forward"
+                >
+                  <iconify-icon icon="solar:arrow-right-linear"></iconify-icon>
+                </button>
+              </div>
             </div>
           </article>
 
           <!-- Column Empty state -->
           <div v-if="columns[stage].length === 0" class="column-empty">
             <iconify-icon icon="solar:folder-empty-linear"></iconify-icon>
-            <span>Empty stage</span>
+            <span>No applications in this stage</span>
           </div>
         </div>
       </div>
@@ -373,7 +375,6 @@ function onPointerCancel(event: PointerEvent) {
   justify-content: center;
   color: var(--color-warning);
   font-size: 0.95rem;
-  animation: pulse-bell 2s infinite ease-in-out;
 }
 
 .pipeline-board {
@@ -525,10 +526,7 @@ function onPointerCancel(event: PointerEvent) {
 
 /* Drag hover micro-interactions for header elements */
 .pipeline-column.drag-over .column-title-group {
-  transform: scale(1.05);
-}
-.pipeline-column.drag-over .column-icon {
-  animation: icon-float 0.8s cubic-bezier(0.25, 1, 0.5, 1) infinite alternate;
+  transform: scale(1.02);
 }
 .pipeline-column.drag-over .column-count {
   background: currentColor;
@@ -581,6 +579,7 @@ function onPointerCancel(event: PointerEvent) {
   font-size: 0.75rem;
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
   transition: background-color 250ms cubic-bezier(0.16, 1, 0.3, 1),
               color 250ms cubic-bezier(0.16, 1, 0.3, 1),
               box-shadow 250ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -617,6 +616,7 @@ function onPointerCancel(event: PointerEvent) {
 
 .job-card:active {
   cursor: grabbing;
+  transform: scale(0.98);
 }
 
 .job-card.is-dragging {
@@ -639,11 +639,13 @@ function onPointerCancel(event: PointerEvent) {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 
-.job-card:hover {
-  background: rgba(23, 23, 23, 0.8);
-  border-color: #404040;
-  transform: translateY(-3px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+@media (hover: hover) and (pointer: fine) {
+  .job-card:hover {
+    background: rgba(23, 23, 23, 0.8);
+    border-color: #404040;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
 }
 
 .card-header {
@@ -656,19 +658,17 @@ function onPointerCancel(event: PointerEvent) {
 .card-company-wrapper {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.4rem;
   min-width: 0;
-  flex: 1;
 }
 
 .card-company {
-  color: #f5f5f5;
   font-weight: 600;
   font-size: 0.85rem;
+  color: var(--neutral-100);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
 }
 
 .card-reminder-badge {
@@ -677,11 +677,11 @@ function onPointerCancel(event: PointerEvent) {
   justify-content: center;
   color: var(--color-warning);
   font-size: 0.95rem;
-  animation: pulse-bell 2s infinite ease-in-out;
 }
 
 .card-date {
-  color: #525252;
+  color: var(--neutral-400);
+  font-variant-numeric: tabular-nums;
   font-size: 0.7rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
@@ -730,7 +730,7 @@ function onPointerCancel(event: PointerEvent) {
 }
 
 .card-location {
-  color: #525252;
+  color: var(--neutral-400);
   font-size: 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -754,7 +754,7 @@ function onPointerCancel(event: PointerEvent) {
 }
 
 .card-salary.tbd {
-  color: #404040;
+  color: var(--neutral-500);
 }
 
 .card-checklist-badge {
@@ -779,48 +779,45 @@ function onPointerCancel(event: PointerEvent) {
   font-size: 0.8rem;
 }
 
-.card-actions {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  right: 0;
-  transform: translateY(-50%);
+.card-footer-left {
   display: flex;
-  justify-content: space-between;
-  padding: 0 0.5rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
   opacity: 0;
   pointer-events: none;
   transition: opacity 150ms;
 }
 
-.job-card:hover .card-actions {
+.job-card:hover .card-actions,
+.job-card:focus-within .card-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .quick-move-btn {
   display: grid;
   place-items: center;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.6rem;
+  height: 1.6rem;
   background: #171717;
   border: 1px solid #404040;
   border-radius: 999px;
-  color: #a3a3a3;
-  font-size: 0.9rem;
+  color: var(--neutral-400);
+  font-size: 0.85rem;
   cursor: pointer;
   pointer-events: auto;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
   transition: color 150ms, background-color 150ms, border-color 150ms;
-  position: relative;
 }
 
-.quick-move-btn::after {
-  content: '';
-  position: absolute;
-  top: -10px;
-  bottom: -10px;
-  left: -10px;
-  right: -10px;
+.quick-move-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
 }
 
 .quick-move-btn:hover:not(:disabled) {
@@ -852,15 +849,7 @@ function onPointerCancel(event: PointerEvent) {
   font-size: 1.5rem;
 }
 
-/* Global Keyframes for Floating Icon & Reminder Bell */
-@keyframes icon-float {
-  0% {
-    transform: translateY(0);
-  }
-  100% {
-    transform: translateY(-4px);
-  }
-}
+
 
 /* -------------------------------------------------------------
  * RESPONSIVE ADAPTATIONS & MOBILE TAB BAR
@@ -908,7 +897,11 @@ function onPointerCancel(event: PointerEvent) {
     text-transform: uppercase;
     white-space: nowrap;
     cursor: pointer;
-    transition: all 150ms ease;
+    transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, transform 80ms ease;
+  }
+
+  .mobile-stage-tab-btn:active {
+    transform: scale(0.97);
   }
   
   .mobile-stage-tab-btn.active {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, nextTick } from 'vue';
 import type { UserProfile } from '@jobapp/shared';
 
 const emit = defineEmits<{
@@ -50,6 +50,12 @@ function clearExtractedFields() {
 // Data Export & Import state
 const importFileInput = ref<HTMLInputElement | null>(null);
 const importModalOpen = ref(false);
+const importDialog = ref<HTMLDialogElement | null>(null);
+watch(importModalOpen, async (open) => {
+  await nextTick();
+  if (open) importDialog.value?.showModal();
+  else importDialog.value?.close();
+});
 const importFileParsed = ref<{
   fileName: string;
   count: number;
@@ -461,7 +467,7 @@ onMounted(() => {
       </div>
 
       <div class="header-badge" v-if="isNewMode">
-        <span class="badge-dot pulse"></span>
+        <span class="badge-dot"></span>
         Creating New Profile
       </div>
     </div>
@@ -567,7 +573,7 @@ onMounted(() => {
             type="button" 
             class="save-btn" 
             @click="handleSave"
-            title="Save changes to SQLite database"
+            title="Save profile changes"
           >
             <iconify-icon icon="solar:diskette-linear"></iconify-icon>
             Save Profile
@@ -595,7 +601,7 @@ onMounted(() => {
         </div>
 
         <Transition name="fade">
-          <div v-if="showSuccessMsg" class="success-alert">
+          <div v-if="showSuccessMsg" class="success-alert" role="status">
             <iconify-icon icon="solar:check-circle-bold-duotone" class="alert-icon"></iconify-icon>
             <span>{{ showSuccessMsg }}</span>
           </div>
@@ -616,6 +622,12 @@ onMounted(() => {
             
             <div 
               class="drag-drop-area"
+              role="button"
+              tabindex="0"
+              aria-label="Choose resume file"
+              :aria-disabled="isParsing"
+              @keydown.enter.self.prevent="!isParsing && triggerFileSelect()"
+              @keydown.space.self.prevent="!isParsing && triggerFileSelect()"
               :class="{ 'drag-active': dragActive, 'parsing': isParsing }"
               @dragover="handleDragOver"
               @dragleave="handleDragLeave"
@@ -688,6 +700,7 @@ onMounted(() => {
               </span>
             </span>
             <textarea 
+              aria-label="Resume text"
               v-model="selectedProfile.resumeText" 
               placeholder="Paste plain-text content here, or upload a PDF above to extract raw text automatically..."
               rows="12"
@@ -732,7 +745,7 @@ onMounted(() => {
       </div>
 
       <Transition name="fade">
-        <div v-if="importFeedback" class="backup-feedback" :class="importFeedback.type">
+        <div v-if="importFeedback" role="status" class="backup-feedback" :class="importFeedback.type">
           <iconify-icon :icon="importFeedback.type === 'success' ? 'solar:check-circle-bold-duotone' : 'solar:danger-triangle-bold-duotone'"></iconify-icon>
           <span>{{ importFeedback.message }}</span>
         </div>
@@ -740,11 +753,10 @@ onMounted(() => {
     </section>
 
     <!-- Import Confirmation Modal -->
-    <div v-if="importModalOpen" class="import-modal-overlay">
-      <div class="import-modal">
+    <dialog ref="importDialog" class="import-modal" aria-labelledby="import-title" @cancel.prevent="!isImporting && cancelImport()">
         <div class="modal-header">
-          <h3>Confirm Data Import</h3>
-          <button type="button" class="close-btn" @click="cancelImport">
+          <h3 id="import-title">Confirm Data Import</h3>
+          <button type="button" class="close-btn" aria-label="Close import confirmation" :disabled="isImporting" @click="cancelImport">
             <iconify-icon icon="solar:close-circle-linear"></iconify-icon>
           </button>
         </div>
@@ -766,6 +778,7 @@ onMounted(() => {
             </label>
           </div>
         </div>
+        <p v-if="importFeedback?.type === 'error'" class="backup-feedback error" role="alert">{{ importFeedback.message }} Check the file and try again.</p>
         <div class="modal-footer">
           <button type="button" class="cancel-btn" @click="cancelImport" :disabled="isImporting">
             Cancel
@@ -775,8 +788,7 @@ onMounted(() => {
             <span v-else>Confirm &amp; Import</span>
           </button>
         </div>
-      </div>
-    </div>
+    </dialog>
   </div>
 </template>
 
@@ -849,6 +861,11 @@ onMounted(() => {
   outline: none;
 }
 
+.profile-select-dropdown:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 .new-profile-btn {
   display: inline-flex;
   align-items: center;
@@ -860,7 +877,7 @@ onMounted(() => {
   border-radius: var(--radius-md);
   font-size: 0.85rem;
   font-weight: 500;
-  transition: all 0.2s;
+  transition: background-color 150ms var(--transition-ease), border-color 150ms var(--transition-ease), color 150ms var(--transition-ease), transform 80ms var(--transition-ease);
 }
 
 .new-profile-btn:hover {
@@ -869,17 +886,21 @@ onMounted(() => {
   border-color: var(--neutral-600);
 }
 
+.new-profile-btn:active {
+  transform: scale(0.97);
+}
+
 .header-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.75rem;
-  color: var(--color-warning);
+  gap: 0.4rem;
+  padding: 0.25rem 0.6rem;
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.2);
   border-radius: var(--radius-full);
+  color: var(--color-warning);
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .badge-dot {
@@ -887,16 +908,6 @@ onMounted(() => {
   height: 6px;
   background-color: var(--color-warning);
   border-radius: var(--radius-full);
-}
-
-.badge-dot.pulse {
-  animation: pulse-dot 1.5s infinite;
-}
-
-@keyframes pulse-dot {
-  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
-  70% { transform: scale(1); box-shadow: 0 0 0 5px rgba(245, 158, 11, 0); }
-  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
 }
 
 /* Two Column Layout */
@@ -983,7 +994,7 @@ onMounted(() => {
   border: 1px solid var(--neutral-800);
   border-radius: var(--radius-md);
   font-size: 0.875rem;
-  transition: all 0.2s;
+  transition: border-color 150ms var(--transition-ease), background-color 150ms var(--transition-ease);
 }
 
 .form-field input:focus,
@@ -1013,11 +1024,15 @@ onMounted(() => {
   border-radius: var(--radius-md);
   font-size: 0.875rem;
   font-weight: 600;
-  transition: background-color 0.2s;
+  transition: background-color 150ms var(--transition-ease), transform 80ms var(--transition-ease);
 }
 
 .save-btn:hover {
   background: var(--neutral-200);
+}
+
+.save-btn:active {
+  transform: scale(0.97);
 }
 
 .cancel-btn {
@@ -1027,12 +1042,16 @@ onMounted(() => {
   border: 1px solid var(--neutral-800);
   border-radius: var(--radius-md);
   font-size: 0.875rem;
-  transition: all 0.2s;
+  transition: color 150ms var(--transition-ease), background-color 150ms var(--transition-ease), border-color 150ms var(--transition-ease), transform 80ms var(--transition-ease);
 }
 
 .cancel-btn:hover {
   color: var(--neutral-100);
   background: rgba(38, 38, 38, 0.4);
+}
+
+.cancel-btn:active {
+  transform: scale(0.97);
 }
 
 .delete-btn {
@@ -1243,13 +1262,6 @@ onMounted(() => {
   font-family: var(--font-mono);
   font-weight: 600;
   letter-spacing: 0.2px;
-  animation: glow-pulse 2s infinite ease-in-out;
-}
-
-@keyframes glow-pulse {
-  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.25); }
-  50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
 }
 
 .extracted-highlight {
@@ -1344,12 +1356,6 @@ onMounted(() => {
 
 .magic-icon {
   font-size: 0.75rem;
-  animation: magic-spin 3s infinite linear;
-}
-
-@keyframes magic-spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
 }
 
 .text-review-editor {
@@ -1454,25 +1460,22 @@ onMounted(() => {
 }
 
 /* Import Modal */
-.import-modal-overlay {
-  position: fixed;
-  inset: 0;
+.import-modal::backdrop {
   background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  padding: 1rem;
 }
 
 .import-modal {
-  width: 100%;
+  margin: auto;
+  padding: 0;
+  color: var(--neutral-100);
+  width: calc(100% - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overscroll-behavior: contain;
   max-width: 500px;
   background: #171717;
   border: 1px solid var(--neutral-700);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow: auto;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
 }
 
