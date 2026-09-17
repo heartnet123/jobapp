@@ -61,7 +61,7 @@ function moveStage(app: JobApplication, direction: 'prev' | 'next') {
 
 function getCompletedChecklistCount(app: JobApplication) {
   if (!app.checklist || app.checklist.length === 0) return { completed: 0, total: 0 };
-  const completed = app.checklist.filter((item) => item.done).length;
+  const completed = app.checklist.filter((item) => item?.done).length;
   return { completed, total: app.checklist.length };
 }
 

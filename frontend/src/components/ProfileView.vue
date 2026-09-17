@@ -4,6 +4,7 @@ import type { UserProfile } from '@jobapp/shared';
 
 const emit = defineEmits<{
   (e: 'update-active-profile', profileName: string, profileTitle: string): void;
+  (e: 'applications-changed'): void;
 }>();
 
 const profiles = ref<UserProfile[]>([]);
@@ -130,6 +131,7 @@ async function executeImport() {
       throw new Error(errData.error || 'Import failed');
     }
     const result = await res.json();
+    emit('applications-changed');
     importFeedback.value = {
       type: 'success',
       message: `Import complete: ${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped.`,

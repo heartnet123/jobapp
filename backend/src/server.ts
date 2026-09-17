@@ -91,7 +91,11 @@ app.use(cors());
 const defaultJson = express.json();
 const largeJson = express.json({ limit: process.env.JSON_BODY_LIMIT || "10mb" });
 app.use((req, res, next) => {
-  if (req.path === "/api/parse-resume" || (req.path === "/api/profiles" && req.method === "POST")) {
+  if (
+    req.path === "/api/parse-resume" ||
+    (req.path === "/api/profiles" && req.method === "POST") ||
+    (req.path === "/api/import" && req.method === "POST")
+  ) {
     return largeJson(req, res, next);
   }
   return defaultJson(req, res, next);
@@ -105,10 +109,30 @@ app.use((req, res, next) => {
   res.status(404).json({ error: "Not Found" });
 });
 
-
 let db: Database<sqlite3.Database, sqlite3.Statement>;
 let automationInterval: NodeJS.Timeout | undefined;
-const APPLICATION_REQUIRED_FIELDS = ["id", "company", "role", "stage"] as const;
+
+let writeQueue: Promise<unknown> = Promise.resolve();
+function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = writeQueue.then(fn, fn);
+  writeQueue = next.then(
+    () => {},
+    () => {},
+  );
+  return next;
+}
+
+const APPLICATION_REQUIRED_FIELDS = [
+  "id",
+  "company",
+  "role",
+  "stage",
+  "date",
+  "salary",
+  "location",
+  "url",
+  "notes",
+] as const;
 const VALID_STAGES = new Set<string>(STAGES);
 const VALID_WORK_MODES = new Set<string>(WORK_MODES);
 const APPLICATION_STRING_LIMITS = {
@@ -143,10 +167,67 @@ function missingRequiredStringFields(
   data: Record<string, unknown>,
   fields: readonly string[],
 ): string[] {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return [...fields];
+  }
   return fields.filter((field) => {
     const value = data[field];
+    if (
+      field === "salary" ||
+      field === "location" ||
+      field === "url" ||
+      field === "notes"
+    ) {
+      return typeof value !== "string";
+    }
     return typeof value !== "string" || value.trim().length === 0;
   });
+}
+
+const VALID_HISTORY_TYPES = new Set([
+  "creation",
+  "stage_change",
+  "field_edit",
+  "checklist_toggle",
+  "note_update",
+  "contact_update",
+]);
+
+function isValidChecklistItem(item: unknown): boolean {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const c = item as Record<string, unknown>;
+  return (
+    typeof c.id === "string" &&
+    c.id.trim().length > 0 &&
+    typeof c.text === "string" &&
+    typeof c.done === "boolean"
+  );
+}
+
+function isValidContactItem(item: unknown): boolean {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const c = item as Record<string, unknown>;
+  return (
+    typeof c.id === "string" &&
+    typeof c.name === "string" &&
+    typeof c.role === "string" &&
+    typeof c.email === "string" &&
+    typeof c.phone === "string" &&
+    typeof c.linkedIn === "string" &&
+    typeof c.notes === "string"
+  );
+}
+
+function isValidHistoryItem(item: unknown): boolean {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const h = item as Record<string, unknown>;
+  return (
+    typeof h.id === "string" &&
+    typeof h.timestamp === "string" &&
+    typeof h.type === "string" &&
+    VALID_HISTORY_TYPES.has(h.type) &&
+    typeof h.message === "string"
+  );
 }
 
 function missingFieldsError(fields: string[]) {
@@ -391,6 +472,11 @@ app.post("/api/import", async (req, res) => {
 
     for (let i = 0; i < rawApps.length; i++) {
       const item = rawApps[i] as Record<string, unknown>;
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return res.status(400).json({
+          error: `Record [${i}] must be an object`,
+        });
+      }
       const missing = missingRequiredStringFields(item, APPLICATION_REQUIRED_FIELDS);
       if (missing.length > 0) {
         return res.status(400).json({
@@ -409,85 +495,116 @@ app.post("/api/import", async (req, res) => {
           error: `Record [${i}] (${item.id}) has oversized fields: ${oversized.join(", ")}`,
         });
       }
-      if (item.checklist !== undefined && !Array.isArray(item.checklist)) {
-        return res.status(400).json({ error: `Record [${i}] (${item.id}) checklist must be an array` });
+      if (item.checklist !== undefined) {
+        if (!Array.isArray(item.checklist)) {
+          return res.status(400).json({ error: `Record [${i}] (${item.id}) checklist must be an array` });
+        }
+        for (let j = 0; j < item.checklist.length; j++) {
+          if (!isValidChecklistItem(item.checklist[j])) {
+            return res.status(400).json({
+              error: `Record [${i}] (${item.id}) checklist item [${j}] is invalid`,
+            });
+          }
+        }
       }
-      if (item.contacts !== undefined && !Array.isArray(item.contacts)) {
-        return res.status(400).json({ error: `Record [${i}] (${item.id}) contacts must be an array` });
+      if (item.contacts !== undefined) {
+        if (!Array.isArray(item.contacts)) {
+          return res.status(400).json({ error: `Record [${i}] (${item.id}) contacts must be an array` });
+        }
+        for (let j = 0; j < item.contacts.length; j++) {
+          if (!isValidContactItem(item.contacts[j])) {
+            return res.status(400).json({
+              error: `Record [${i}] (${item.id}) contact item [${j}] is invalid`,
+            });
+          }
+        }
       }
-      if (item.history !== undefined && !Array.isArray(item.history)) {
-        return res.status(400).json({ error: `Record [${i}] (${item.id}) history must be an array` });
+      if (item.history !== undefined) {
+        if (!Array.isArray(item.history)) {
+          return res.status(400).json({ error: `Record [${i}] (${item.id}) history must be an array` });
+        }
+        for (let j = 0; j < item.history.length; j++) {
+          if (!isValidHistoryItem(item.history[j])) {
+            return res.status(400).json({
+              error: `Record [${i}] (${item.id}) history item [${j}] is invalid`,
+            });
+          }
+        }
       }
     }
 
-    let inserted = 0;
-    let updated = 0;
-    let skipped = 0;
+    const result = await withWriteLock(async () => {
+      let inserted = 0;
+      let updated = 0;
+      let skipped = 0;
 
-    await db.run("BEGIN TRANSACTION");
-    try {
-      for (const raw of rawApps) {
-        const app = raw as JobApplication;
-        const appValues = [
-          app.company,
-          app.role,
-          app.stage,
-          app.date,
-          app.salary,
-          app.location,
-          app.workMode,
-          app.url,
-          app.notes,
-          app.reminderDate || null,
-          JSON.stringify(app.checklist || []),
-          JSON.stringify(app.contacts || []),
-          JSON.stringify(app.history || []),
-        ];
+      await db.run("BEGIN TRANSACTION");
+      try {
+        for (const raw of rawApps) {
+          const app = raw as JobApplication;
+          const appValues = [
+            app.company,
+            app.role,
+            app.stage,
+            app.date,
+            app.salary,
+            app.location,
+            app.workMode,
+            app.url,
+            app.notes,
+            app.reminderDate || null,
+            JSON.stringify(app.checklist || []),
+            JSON.stringify(app.contacts || []),
+            JSON.stringify(app.history || []),
+          ];
 
-        if (conflictPolicy === "skip") {
-          const insertRes = await db.run(
-            `INSERT OR IGNORE INTO applications (
-              company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history, id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [...appValues, app.id],
-          );
-          if ((insertRes.changes ?? 0) > 0) {
-            inserted++;
-          } else {
-            skipped++;
-          }
-        } else {
-          const updateRes = await db.run(
-            `UPDATE applications SET
-              company = ?, role = ?, stage = ?, date = ?, salary = ?, location = ?, workMode = ?, url = ?, notes = ?, reminderDate = ?, checklist = ?, contacts = ?, history = ?
-             WHERE id = ?`,
-            [...appValues, app.id],
-          );
-          if ((updateRes.changes ?? 0) > 0) {
-            updated++;
-          } else {
-            await db.run(
-              `INSERT INTO applications (
+          if (conflictPolicy === "skip") {
+            const insertRes = await db.run(
+              `INSERT OR IGNORE INTO applications (
                 company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history, id
               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [...appValues, app.id],
             );
-            inserted++;
+            if ((insertRes.changes ?? 0) > 0) {
+              inserted++;
+            } else {
+              skipped++;
+            }
+          } else {
+            const updateRes = await db.run(
+              `UPDATE applications SET
+                company = ?, role = ?, stage = ?, date = ?, salary = ?, location = ?, workMode = ?, url = ?, notes = ?, reminderDate = ?, checklist = ?, contacts = ?, history = ?
+               WHERE id = ?`,
+              [...appValues, app.id],
+            );
+            if ((updateRes.changes ?? 0) > 0) {
+              updated++;
+            } else {
+              await db.run(
+                `INSERT INTO applications (
+                  company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history, id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [...appValues, app.id],
+              );
+              inserted++;
+            }
           }
         }
+        await db.run("COMMIT");
+      } catch (txErr) {
+        await db.run("ROLLBACK");
+        throw txErr;
       }
-      await db.run("COMMIT");
-    } catch (txErr) {
-      await db.run("ROLLBACK");
-      throw txErr;
-    }
 
-    res.json({
-      total: rawApps.length,
-      inserted,
-      updated,
-      skipped,
+      return {
+        total: rawApps.length,
+        inserted,
+        updated,
+        skipped,
+      };
     });
+
+    res.json(result);
   } catch (error: any) {
     console.error("Error importing data:", error);
     res.status(500).json({ error: error.message });
@@ -498,6 +615,9 @@ app.post("/api/import", async (req, res) => {
 app.post("/api/applications", async (req, res) => {
   try {
     const appData: JobApplication = req.body;
+    if (!appData || typeof appData !== "object" || Array.isArray(appData)) {
+      return res.status(400).json({ error: "Application data must be an object" });
+    }
     const missingFields = missingRequiredStringFields(
       appData as unknown as Record<string, unknown>,
       APPLICATION_REQUIRED_FIELDS,
@@ -518,26 +638,28 @@ app.post("/api/applications", async (req, res) => {
       return res.status(400).json(oversizedFieldsError(oversizedFields));
     }
 
-    await db.run(
-      `INSERT INTO applications (
-        id, company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        appData.id,
-        appData.company,
-        appData.role,
-        appData.stage,
-        appData.date,
-        appData.salary,
-        appData.location,
-        appData.workMode,
-        appData.url,
-        appData.notes,
-        appData.reminderDate || null,
-        JSON.stringify(appData.checklist || []),
-        JSON.stringify(appData.contacts || []),
-        JSON.stringify(appData.history || []),
-      ],
+    await withWriteLock(() =>
+      db.run(
+        `INSERT INTO applications (
+          id, company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          appData.id,
+          appData.company,
+          appData.role,
+          appData.stage,
+          appData.date,
+          appData.salary,
+          appData.location,
+          appData.workMode,
+          appData.url,
+          appData.notes,
+          appData.reminderDate || null,
+          JSON.stringify(appData.checklist || []),
+          JSON.stringify(appData.contacts || []),
+          JSON.stringify(appData.history || []),
+        ],
+      ),
     );
 
     res.status(201).json(appData);
@@ -552,6 +674,9 @@ app.put("/api/applications/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const appData: JobApplication = req.body;
+    if (!appData || typeof appData !== "object" || Array.isArray(appData)) {
+      return res.status(400).json({ error: "Application data must be an object" });
+    }
     const missingFields = missingRequiredStringFields(
       appData as unknown as Record<string, unknown>,
       APPLICATION_REQUIRED_FIELDS,
@@ -581,38 +706,40 @@ app.put("/api/applications/:id", async (req, res) => {
         .json({ error: `Application with ID ${id} not found` });
     }
 
-    await db.run(
-      `UPDATE applications SET
-        company = ?,
-        role = ?,
-        stage = ?,
-        date = ?,
-        salary = ?,
-        location = ?,
-        workMode = ?,
-        url = ?,
-        notes = ?,
-        reminderDate = ?,
-        checklist = ?,
-        contacts = ?,
-        history = ?
-      WHERE id = ?`,
-      [
-        appData.company,
-        appData.role,
-        appData.stage,
-        appData.date,
-        appData.salary,
-        appData.location,
-        appData.workMode,
-        appData.url,
-        appData.notes,
-        appData.reminderDate || null,
-        JSON.stringify(appData.checklist || []),
-        JSON.stringify(appData.contacts || []),
-        JSON.stringify(appData.history || []),
-        id,
-      ],
+    await withWriteLock(() =>
+      db.run(
+        `UPDATE applications SET
+          company = ?,
+          role = ?,
+          stage = ?,
+          date = ?,
+          salary = ?,
+          location = ?,
+          workMode = ?,
+          url = ?,
+          notes = ?,
+          reminderDate = ?,
+          checklist = ?,
+          contacts = ?,
+          history = ?
+        WHERE id = ?`,
+        [
+          appData.company,
+          appData.role,
+          appData.stage,
+          appData.date,
+          appData.salary,
+          appData.location,
+          appData.workMode,
+          appData.url,
+          appData.notes,
+          appData.reminderDate || null,
+          JSON.stringify(appData.checklist || []),
+          JSON.stringify(appData.contacts || []),
+          JSON.stringify(appData.history || []),
+          id,
+        ],
+      ),
     );
 
     res.json(appData);
@@ -636,7 +763,9 @@ app.delete("/api/applications/:id", async (req, res) => {
         .json({ error: `Application with ID ${id} not found` });
     }
 
-    await db.run("DELETE FROM applications WHERE id = ?", [id]);
+    await withWriteLock(() =>
+      db.run("DELETE FROM applications WHERE id = ?", [id]),
+    );
     res.json({ message: `Successfully deleted application ${id}` });
   } catch (error: any) {
     console.error("Error deleting application:", error);
@@ -693,53 +822,56 @@ app.post("/api/profiles", async (req, res) => {
     const existing = await db.get("SELECT id FROM profiles WHERE id = ?", [
       profile.id,
     ]);
-    if (existing) {
-      // Update
-      await db.run(
-        `UPDATE profiles SET
-          fullName = ?,
-          email = ?,
-          phone = ?,
-          title = ?,
-          bio = ?,
-          resumeText = ?,
-          resumeFileName = ?,
-          resumeFile = ?,
-          updatedAt = ?
-        WHERE id = ?`,
-        [
-          profile.fullName,
-          profile.email,
-          profile.phone,
-          profile.title,
-          profile.bio,
-          profile.resumeText || null,
-          profile.resumeFileName || null,
-          profile.resumeFile || null,
-          new Date().toISOString(),
-          profile.id,
-        ],
-      );
-    } else {
-      // Insert
-      await db.run(
-        `INSERT INTO profiles (
-          id, fullName, email, phone, title, bio, resumeText, resumeFileName, resumeFile, updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          profile.id,
-          profile.fullName,
-          profile.email,
-          profile.phone,
-          profile.title,
-          profile.bio,
-          profile.resumeText || null,
-          profile.resumeFileName || null,
-          profile.resumeFile || null,
-          new Date().toISOString(),
-        ],
-      );
-    }
+
+    await withWriteLock(async () => {
+      if (existing) {
+        // Update
+        await db.run(
+          `UPDATE profiles SET
+            fullName = ?,
+            email = ?,
+            phone = ?,
+            title = ?,
+            bio = ?,
+            resumeText = ?,
+            resumeFileName = ?,
+            resumeFile = ?,
+            updatedAt = ?
+          WHERE id = ?`,
+          [
+            profile.fullName,
+            profile.email,
+            profile.phone,
+            profile.title,
+            profile.bio,
+            profile.resumeText || null,
+            profile.resumeFileName || null,
+            profile.resumeFile || null,
+            new Date().toISOString(),
+            profile.id,
+          ],
+        );
+      } else {
+        // Insert
+        await db.run(
+          `INSERT INTO profiles (
+            id, fullName, email, phone, title, bio, resumeText, resumeFileName, resumeFile, updatedAt
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            profile.id,
+            profile.fullName,
+            profile.email,
+            profile.phone,
+            profile.title,
+            profile.bio,
+            profile.resumeText || null,
+            profile.resumeFileName || null,
+            profile.resumeFile || null,
+            new Date().toISOString(),
+          ],
+        );
+      }
+    });
 
     const saved = await db.get("SELECT * FROM profiles WHERE id = ?", [
       profile.id,
@@ -760,7 +892,9 @@ app.delete("/api/profiles/:id", async (req, res) => {
       return res.status(404).json({ error: `Profile with ID ${id} not found` });
     }
 
-    await db.run("DELETE FROM profiles WHERE id = ?", [id]);
+    await withWriteLock(() =>
+      db.run("DELETE FROM profiles WHERE id = ?", [id]),
+    );
     res.json({ message: `Successfully deleted profile ${id}` });
   } catch (error: any) {
     console.error("Error deleting profile:", error);
@@ -1025,7 +1159,7 @@ app.get("/api/automation/queue", async (req, res) => {
 // POST /api/automation/queue/:id/apply - Apply a proposed automation action
 app.post("/api/automation/queue/:id/apply", async (req, res) => {
   try {
-    await applyAutomationQueueItem(db, req.params.id);
+    await withWriteLock(() => applyAutomationQueueItem(db, req.params.id));
     res.json({ status: "applied" });
   } catch (error: any) {
     console.error("Error applying automation queue item:", error);
@@ -1036,7 +1170,7 @@ app.post("/api/automation/queue/:id/apply", async (req, res) => {
 // POST /api/automation/queue/:id/ignore - Ignore an automation queue item
 app.post("/api/automation/queue/:id/ignore", async (req, res) => {
   try {
-    await ignoreAutomationQueueItem(db, req.params.id);
+    await withWriteLock(() => ignoreAutomationQueueItem(db, req.params.id));
     res.json({ status: "ignored" });
   } catch (error: any) {
     console.error("Error ignoring automation queue item:", error);
@@ -1054,12 +1188,25 @@ app.post("/api/automation/queue/:id/link", async (req, res) => {
         .status(400)
         .json({ error: "Missing required field (applicationId)" });
     }
-    await linkAutomationQueueItem(db, req.params.id, applicationId);
+    await withWriteLock(() =>
+      linkAutomationQueueItem(db, req.params.id, applicationId),
+    );
     res.json({ status: "applied" });
   } catch (error: any) {
     console.error("Error linking automation queue item:", error);
     res.status(400).json({ error: error.message });
   }
+});
+
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === "entity.too.large" || err?.status === 413) {
+    const errorMsg =
+      req.path === "/api/import"
+        ? "Import payload exceeds maximum size limit"
+        : "Payload exceeds maximum size limit";
+    return res.status(413).json({ error: errorMsg });
+  }
+  next(err);
 });
 
 // Create combined HTTP & WebSocket server

@@ -620,4 +620,213 @@ describe('SQLite Daemon Integration Tests', () => {
     const errData = await res.json() as any;
     expect(errData.error).toBeDefined();
   });
+
+  it('should reject import records with malformed checklist, contacts, or history elements (POST /api/import)', async () => {
+    const malformedChecklistPayload = {
+      conflictPolicy: 'skip',
+      applications: [
+        {
+          ...testApp,
+          id: 'APP-MALFORMED-CHECKLIST',
+          checklist: [null],
+        },
+      ],
+    };
+
+    const res1 = await fetch(`http://localhost:${TEST_PORT}/api/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(malformedChecklistPayload),
+    });
+
+    expect(res1.status).toBe(400);
+    const err1 = await res1.json() as any;
+    expect(err1.error).toContain('checklist');
+
+    const malformedContactPayload = {
+      conflictPolicy: 'skip',
+      applications: [
+        {
+          ...testApp,
+          id: 'APP-MALFORMED-CONTACT',
+          contacts: [null],
+        },
+      ],
+    };
+
+    const res2 = await fetch(`http://localhost:${TEST_PORT}/api/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(malformedContactPayload),
+    });
+
+    expect(res2.status).toBe(400);
+    const err2 = await res2.json() as any;
+    expect(err2.error).toContain('contact');
+  });
+
+  it('should reject incomplete imports missing scalar NOT NULL fields with 400 not 500 (POST /api/import)', async () => {
+    const missingDatePayload = {
+      conflictPolicy: 'skip',
+      applications: [
+        {
+          id: 'APP-MISSING-DATE',
+          company: 'Acme Corp',
+          role: 'Engineer',
+          stage: 'Applied',
+          workMode: 'Remote',
+          salary: '$100k',
+          location: 'Remote',
+          url: 'https://example.com',
+          notes: 'notes',
+          // date omitted
+        },
+      ],
+    };
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(missingDatePayload),
+    });
+
+    expect(res.status).toBe(400);
+    const err = await res.json() as any;
+    expect(err.error).toContain('date');
+  });
+
+  it('should allow large imports exceeding 100 KB (POST /api/import)', async () => {
+    // 15 apps with 8KB notes each > 120KB total
+    const largeApps: JobApplication[] = Array.from({ length: 15 }, (_, i) => ({
+      id: `APP-LARGE-${i}`,
+      company: `Large Co ${i}`,
+      role: 'Staff Engineer',
+      stage: 'Applied',
+      date: '2026-09-17',
+      salary: '$200,000',
+      location: 'Remote',
+      workMode: 'Remote',
+      url: `https://example.com/job/${i}`,
+      notes: 'x'.repeat(8000),
+      checklist: [],
+      contacts: [],
+      history: [],
+    }));
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conflictPolicy: 'overwrite', applications: largeApps }),
+    });
+
+    expect(res.status).toBe(200);
+    const summary = await res.json() as any;
+    expect(summary.total).toBe(15);
+  });
+
+  it('should reject non-object application items with 400 (POST /api/import)', async () => {
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ applications: [null] }),
+    });
+
+    expect(res.status).toBe(400);
+    const err = (await res.json()) as any;
+    expect(err.error).toContain('must be an object');
+  });
+
+  it('should return 413 when import payload exceeds limit (POST /api/import)', async () => {
+    const hugePayload = JSON.stringify({
+      applications: [
+        {
+          ...testApp,
+          notes: 'x'.repeat(11 * 1024 * 1024),
+        },
+      ],
+    });
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: hugePayload,
+    });
+
+    expect(res.status).toBe(413);
+    const err = (await res.json()) as any;
+    expect(err.error).toBe('Import payload exceeds maximum size limit');
+  });
+
+  it('should prevent import rollback from deleting concurrent saves', async () => {
+    // Intercept db.run to throw when inserting second app in transaction
+    const originalRun = db.run.bind(db);
+    (db as any).run = async (sql: any, ...params: any[]) => {
+      if (
+        typeof sql === 'string' &&
+        sql.includes('INSERT') &&
+        Array.isArray(params[0]) &&
+        params[0].includes('APP-FAIL-TRIGGER')
+      ) {
+        throw new Error('Simulated SQLite transaction failure');
+      }
+      return originalRun(sql, ...params);
+    };
+
+    const failingImportPayload = {
+      conflictPolicy: 'skip',
+      applications: [
+        {
+          ...testApp,
+          id: 'APP-IMPORT-WILL-ROLLBACK',
+          company: 'Should Rollback',
+        },
+        {
+          ...testApp,
+          id: 'APP-FAIL-TRIGGER',
+        },
+      ],
+    };
+
+    const concurrentApp: JobApplication = {
+      id: 'APP-CONCURRENT-ALICE',
+      company: 'Alice In Wonderland',
+      role: 'Security Engineer',
+      stage: 'Applied',
+      date: '2026-09-17',
+      salary: '$150,000',
+      location: 'New York, NY',
+      workMode: 'Remote',
+      url: 'https://example.com/alice',
+      notes: 'Alice app',
+      checklist: [],
+      contacts: [],
+      history: [],
+    };
+
+    try {
+      const [importRes, createRes] = await Promise.all([
+        fetch(`http://localhost:${TEST_PORT}/api/import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(failingImportPayload),
+        }),
+        fetch(`http://localhost:${TEST_PORT}/api/applications`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(concurrentApp),
+        }),
+      ]);
+
+      expect(importRes.status).toBe(500);
+      expect(createRes.status).toBe(201);
+
+      // Verify Alice was preserved and import was rolled back
+      const getRes = await fetch(`http://localhost:${TEST_PORT}/api/applications`);
+      const all = (await getRes.json()) as JobApplication[];
+      expect(all.find((a) => a.id === 'APP-CONCURRENT-ALICE')).toBeDefined();
+      expect(all.find((a) => a.id === 'APP-IMPORT-WILL-ROLLBACK')).toBeUndefined();
+    } finally {
+      db.run = originalRun;
+    }
+  });
 });
