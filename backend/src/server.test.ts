@@ -663,6 +663,27 @@ describe('SQLite Daemon Integration Tests', () => {
     expect(res2.status).toBe(400);
     const err2 = await res2.json() as any;
     expect(err2.error).toContain('contact');
+
+    const malformedHistoryPayload = {
+      conflictPolicy: 'skip',
+      applications: [
+        {
+          ...testApp,
+          id: 'APP-MALFORMED-HISTORY',
+          history: [null],
+        },
+      ],
+    };
+
+    const res3 = await fetch(`http://localhost:${TEST_PORT}/api/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(malformedHistoryPayload),
+    });
+
+    expect(res3.status).toBe(400);
+    const err3 = await res3.json() as any;
+    expect(err3.error).toContain('history');
   });
 
   it('should reject incomplete imports missing scalar NOT NULL fields with 400 not 500 (POST /api/import)', async () => {
@@ -758,15 +779,25 @@ describe('SQLite Daemon Integration Tests', () => {
   });
 
   it('should prevent import rollback from deleting concurrent saves', async () => {
-    // Intercept db.run to throw when inserting second app in transaction
+    // Intercept db.run to coordinate synchronization and trigger failure
     const originalRun = db.run.bind(db);
+    let signalImportStarted!: () => void;
+    const importStarted = new Promise<void>((resolve) => {
+      signalImportStarted = resolve;
+    });
+
     (db as any).run = async (sql: any, ...params: any[]) => {
+      if (typeof sql === 'string' && sql.includes('BEGIN TRANSACTION')) {
+        signalImportStarted();
+      }
       if (
         typeof sql === 'string' &&
         sql.includes('INSERT') &&
         Array.isArray(params[0]) &&
         params[0].includes('APP-FAIL-TRIGGER')
       ) {
+        // Yield to allow concurrent save request to arrive and queue behind withWriteLock
+        await new Promise((resolve) => setTimeout(resolve, 50));
         throw new Error('Simulated SQLite transaction failure');
       }
       return originalRun(sql, ...params);
@@ -804,18 +835,26 @@ describe('SQLite Daemon Integration Tests', () => {
     };
 
     try {
-      const [importRes, createRes] = await Promise.all([
-        fetch(`http://localhost:${TEST_PORT}/api/import`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(failingImportPayload),
-        }),
-        fetch(`http://localhost:${TEST_PORT}/api/applications`, {
+      // Start import first and wait until transaction begins inside write lock
+      const importPromise = fetch(`http://localhost:${TEST_PORT}/api/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(failingImportPayload),
+      });
+
+      await importStarted;
+
+      // Dispatch concurrent application creation while import holds lock
+      const createRes = await fetch(
+        `http://localhost:${TEST_PORT}/api/applications`,
+        {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(concurrentApp),
-        }),
-      ]);
+        },
+      );
+
+      const importRes = await importPromise;
 
       expect(importRes.status).toBe(500);
       expect(createRes.status).toBe(201);

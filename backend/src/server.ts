@@ -819,11 +819,10 @@ app.post("/api/profiles", async (req, res) => {
         .json({ error: "Missing required fields (id, fullName)" });
     }
 
-    const existing = await db.get("SELECT id FROM profiles WHERE id = ?", [
-      profile.id,
-    ]);
-
-    await withWriteLock(async () => {
+    const isExisting = await withWriteLock(async () => {
+      const existing = await db.get("SELECT id FROM profiles WHERE id = ?", [
+        profile.id,
+      ]);
       if (existing) {
         // Update
         await db.run(
@@ -871,12 +870,13 @@ app.post("/api/profiles", async (req, res) => {
           ],
         );
       }
+      return Boolean(existing);
     });
 
     const saved = await db.get("SELECT * FROM profiles WHERE id = ?", [
       profile.id,
     ]);
-    res.status(existing ? 200 : 201).json(saved);
+    res.status(isExisting ? 200 : 201).json(saved);
   } catch (error: any) {
     console.error("Error saving profile:", error);
     res.status(500).json({ error: error.message });
