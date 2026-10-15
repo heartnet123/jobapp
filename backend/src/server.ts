@@ -45,7 +45,7 @@ for (const envPath of [
     console.warn("Failed to load .env file:", err);
   }
 }
-import type { JobApplication } from "@jobapp/shared";
+import type { JobApplication, ApplicationExport } from "@jobapp/shared";
 import { STAGES, WORK_MODES } from "@jobapp/shared";
 import { extractTextFromPdf, parseResumeText } from "./resumeParser";
 import {
@@ -91,7 +91,11 @@ app.use(cors());
 const defaultJson = express.json();
 const largeJson = express.json({ limit: process.env.JSON_BODY_LIMIT || "10mb" });
 app.use((req, res, next) => {
-  if (req.path === "/api/parse-resume" || (req.path === "/api/profiles" && req.method === "POST")) {
+  if (
+    req.path === "/api/parse-resume" ||
+    (req.path === "/api/profiles" && req.method === "POST") ||
+    (req.path === "/api/import" && req.method === "POST")
+  ) {
     return largeJson(req, res, next);
   }
   return defaultJson(req, res, next);
@@ -105,10 +109,30 @@ app.use((req, res, next) => {
   res.status(404).json({ error: "Not Found" });
 });
 
-
 let db: Database<sqlite3.Database, sqlite3.Statement>;
 let automationInterval: NodeJS.Timeout | undefined;
-const APPLICATION_REQUIRED_FIELDS = ["id", "company", "role", "stage"] as const;
+
+let writeQueue: Promise<unknown> = Promise.resolve();
+function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = writeQueue.then(fn, fn);
+  writeQueue = next.then(
+    () => {},
+    () => {},
+  );
+  return next;
+}
+
+const APPLICATION_REQUIRED_FIELDS = [
+  "id",
+  "company",
+  "role",
+  "stage",
+  "date",
+  "salary",
+  "location",
+  "url",
+  "notes",
+] as const;
 const VALID_STAGES = new Set<string>(STAGES);
 const VALID_WORK_MODES = new Set<string>(WORK_MODES);
 const APPLICATION_STRING_LIMITS = {
@@ -143,10 +167,67 @@ function missingRequiredStringFields(
   data: Record<string, unknown>,
   fields: readonly string[],
 ): string[] {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return [...fields];
+  }
   return fields.filter((field) => {
     const value = data[field];
+    if (
+      field === "salary" ||
+      field === "location" ||
+      field === "url" ||
+      field === "notes"
+    ) {
+      return typeof value !== "string";
+    }
     return typeof value !== "string" || value.trim().length === 0;
   });
+}
+
+const VALID_HISTORY_TYPES = new Set([
+  "creation",
+  "stage_change",
+  "field_edit",
+  "checklist_toggle",
+  "note_update",
+  "contact_update",
+]);
+
+function isValidChecklistItem(item: unknown): boolean {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const c = item as Record<string, unknown>;
+  return (
+    typeof c.id === "string" &&
+    c.id.trim().length > 0 &&
+    typeof c.text === "string" &&
+    typeof c.done === "boolean"
+  );
+}
+
+function isValidContactItem(item: unknown): boolean {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const c = item as Record<string, unknown>;
+  return (
+    typeof c.id === "string" &&
+    typeof c.name === "string" &&
+    typeof c.role === "string" &&
+    typeof c.email === "string" &&
+    typeof c.phone === "string" &&
+    typeof c.linkedIn === "string" &&
+    typeof c.notes === "string"
+  );
+}
+
+function isValidHistoryItem(item: unknown): boolean {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+  const h = item as Record<string, unknown>;
+  return (
+    typeof h.id === "string" &&
+    typeof h.timestamp === "string" &&
+    typeof h.type === "string" &&
+    VALID_HISTORY_TYPES.has(h.type) &&
+    typeof h.message === "string"
+  );
 }
 
 function missingFieldsError(fields: string[]) {
@@ -264,29 +345,273 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+function mapRowToApplication(row: any): JobApplication {
+  return {
+    id: row.id,
+    company: row.company,
+    role: row.role,
+    stage: row.stage,
+    date: row.date,
+    salary: row.salary,
+    location: row.location,
+    workMode: row.workMode,
+    url: row.url,
+    notes: row.notes,
+    reminderDate: row.reminderDate || undefined,
+    checklist: typeof row.checklist === "string" ? JSON.parse(row.checklist || "[]") : (row.checklist || []),
+    contacts: typeof row.contacts === "string" ? JSON.parse(row.contacts || "[]") : (row.contacts || []),
+    history: typeof row.history === "string" ? JSON.parse(row.history || "[]") : (row.history || []),
+  };
+}
+
 // GET /api/applications - Get all applications
 app.get("/api/applications", async (req, res) => {
   try {
     const rows = await db.all("SELECT * FROM applications");
-    const applications = rows.map((row) => ({
-      id: row.id,
-      company: row.company,
-      role: row.role,
-      stage: row.stage,
-      date: row.date,
-      salary: row.salary,
-      location: row.location,
-      workMode: row.workMode,
-      url: row.url,
-      notes: row.notes,
-      reminderDate: row.reminderDate || undefined,
-      checklist: JSON.parse(row.checklist),
-      contacts: JSON.parse(row.contacts),
-      history: JSON.parse(row.history),
-    }));
-    res.json(applications);
+    res.json(rows.map(mapRowToApplication));
   } catch (error: any) {
     console.error("Error fetching applications:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+function escapeCsvCell(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  let str = String(val);
+  // Neutralize spreadsheet formula triggers (CSV injection) before quoting.
+  if (/^[=+\-@\t\r\n]/.test(str)) {
+    str = `'${str}`;
+  }
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function formatApplicationsCsv(apps: JobApplication[]): string {
+  const headers = [
+    "id",
+    "company",
+    "role",
+    "stage",
+    "date",
+    "salary",
+    "location",
+    "workMode",
+    "url",
+    "reminderDate",
+    "notes",
+    "checklistCount",
+    "contactsCount",
+    "historyCount",
+  ];
+  const rows = apps.map((app) =>
+    [
+      escapeCsvCell(app.id),
+      escapeCsvCell(app.company),
+      escapeCsvCell(app.role),
+      escapeCsvCell(app.stage),
+      escapeCsvCell(app.date),
+      escapeCsvCell(app.salary),
+      escapeCsvCell(app.location),
+      escapeCsvCell(app.workMode),
+      escapeCsvCell(app.url),
+      escapeCsvCell(app.reminderDate || ""),
+      escapeCsvCell(app.notes),
+      escapeCsvCell(app.checklist?.length || 0),
+      escapeCsvCell(app.contacts?.length || 0),
+      escapeCsvCell(app.history?.length || 0),
+    ].join(","),
+  );
+  return [headers.join(","), ...rows].join("\r\n");
+}
+
+// GET /api/export - Export applications as JSON envelope or RFC 4180 CSV
+app.get("/api/export", async (req, res) => {
+  try {
+    const format = req.query.format === "csv" ? "csv" : "json";
+    const rows = await db.all("SELECT * FROM applications");
+    const applications = rows.map(mapRowToApplication);
+
+    const dateStr = new Date().toISOString().slice(0, 10);
+    if (format === "csv") {
+      const csv = formatApplicationsCsv(applications);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="jobapp-export-${dateStr}.csv"`,
+      );
+      return res.send(csv);
+    }
+
+    const payload: ApplicationExport = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      count: applications.length,
+      applications,
+    };
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="jobapp-export-${dateStr}.json"`,
+    );
+    res.json(payload);
+  } catch (error: any) {
+    console.error("Error exporting data:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/import - Import applications atomically from JSON with duplicate resolution
+app.post("/api/import", async (req, res) => {
+  try {
+    const body = req.body;
+    const rawApps = Array.isArray(body?.applications) ? body.applications : null;
+    const conflictPolicy: "skip" | "overwrite" =
+      body?.conflictPolicy === "overwrite" ? "overwrite" : "skip";
+
+    if (!rawApps || rawApps.length === 0) {
+      return res.status(400).json({ error: "Missing applications array in export envelope" });
+    }
+
+    for (let i = 0; i < rawApps.length; i++) {
+      const item = rawApps[i] as Record<string, unknown>;
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return res.status(400).json({
+          error: `Record [${i}] must be an object`,
+        });
+      }
+      const missing = missingRequiredStringFields(item, APPLICATION_REQUIRED_FIELDS);
+      if (missing.length > 0) {
+        return res.status(400).json({
+          error: `Record [${i}] (${item.id || "unknown"}) missing required fields: ${missing.join(", ")}`,
+        });
+      }
+      const invalid = invalidApplicationEnumFields(item);
+      if (invalid.length > 0) {
+        return res.status(400).json({
+          error: `Record [${i}] (${item.id}) has invalid enum values: ${invalid.join(", ")}`,
+        });
+      }
+      const oversized = oversizedApplicationStringFields(item);
+      if (oversized.length > 0) {
+        return res.status(400).json({
+          error: `Record [${i}] (${item.id}) has oversized fields: ${oversized.join(", ")}`,
+        });
+      }
+      if (item.checklist !== undefined) {
+        if (!Array.isArray(item.checklist)) {
+          return res.status(400).json({ error: `Record [${i}] (${item.id}) checklist must be an array` });
+        }
+        for (let j = 0; j < item.checklist.length; j++) {
+          if (!isValidChecklistItem(item.checklist[j])) {
+            return res.status(400).json({
+              error: `Record [${i}] (${item.id}) checklist item [${j}] is invalid`,
+            });
+          }
+        }
+      }
+      if (item.contacts !== undefined) {
+        if (!Array.isArray(item.contacts)) {
+          return res.status(400).json({ error: `Record [${i}] (${item.id}) contacts must be an array` });
+        }
+        for (let j = 0; j < item.contacts.length; j++) {
+          if (!isValidContactItem(item.contacts[j])) {
+            return res.status(400).json({
+              error: `Record [${i}] (${item.id}) contact item [${j}] is invalid`,
+            });
+          }
+        }
+      }
+      if (item.history !== undefined) {
+        if (!Array.isArray(item.history)) {
+          return res.status(400).json({ error: `Record [${i}] (${item.id}) history must be an array` });
+        }
+        for (let j = 0; j < item.history.length; j++) {
+          if (!isValidHistoryItem(item.history[j])) {
+            return res.status(400).json({
+              error: `Record [${i}] (${item.id}) history item [${j}] is invalid`,
+            });
+          }
+        }
+      }
+    }
+
+    const result = await withWriteLock(async () => {
+      let inserted = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      await db.run("BEGIN TRANSACTION");
+      try {
+        for (const raw of rawApps) {
+          const app = raw as JobApplication;
+          const appValues = [
+            app.company,
+            app.role,
+            app.stage,
+            app.date,
+            app.salary,
+            app.location,
+            app.workMode,
+            app.url,
+            app.notes,
+            app.reminderDate || null,
+            JSON.stringify(app.checklist || []),
+            JSON.stringify(app.contacts || []),
+            JSON.stringify(app.history || []),
+          ];
+
+          if (conflictPolicy === "skip") {
+            const insertRes = await db.run(
+              `INSERT INTO applications (
+                company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history, id
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO NOTHING`,
+              [...appValues, app.id],
+            );
+            if ((insertRes.changes ?? 0) > 0) {
+              inserted++;
+            } else {
+              skipped++;
+            }
+          } else {
+            const updateRes = await db.run(
+              `UPDATE applications SET
+                company = ?, role = ?, stage = ?, date = ?, salary = ?, location = ?, workMode = ?, url = ?, notes = ?, reminderDate = ?, checklist = ?, contacts = ?, history = ?
+               WHERE id = ?`,
+              [...appValues, app.id],
+            );
+            if ((updateRes.changes ?? 0) > 0) {
+              updated++;
+            } else {
+              await db.run(
+                `INSERT INTO applications (
+                  company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history, id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [...appValues, app.id],
+              );
+              inserted++;
+            }
+          }
+        }
+        await db.run("COMMIT");
+      } catch (txErr) {
+        await db.run("ROLLBACK");
+        throw txErr;
+      }
+
+      return {
+        total: rawApps.length,
+        inserted,
+        updated,
+        skipped,
+      };
+    });
+
+    res.json(result);
+  } catch (error: any) {
+    console.error("Error importing data:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -295,6 +620,9 @@ app.get("/api/applications", async (req, res) => {
 app.post("/api/applications", async (req, res) => {
   try {
     const appData: JobApplication = req.body;
+    if (!appData || typeof appData !== "object" || Array.isArray(appData)) {
+      return res.status(400).json({ error: "Application data must be an object" });
+    }
     const missingFields = missingRequiredStringFields(
       appData as unknown as Record<string, unknown>,
       APPLICATION_REQUIRED_FIELDS,
@@ -315,26 +643,28 @@ app.post("/api/applications", async (req, res) => {
       return res.status(400).json(oversizedFieldsError(oversizedFields));
     }
 
-    await db.run(
-      `INSERT INTO applications (
-        id, company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        appData.id,
-        appData.company,
-        appData.role,
-        appData.stage,
-        appData.date,
-        appData.salary,
-        appData.location,
-        appData.workMode,
-        appData.url,
-        appData.notes,
-        appData.reminderDate || null,
-        JSON.stringify(appData.checklist || []),
-        JSON.stringify(appData.contacts || []),
-        JSON.stringify(appData.history || []),
-      ],
+    await withWriteLock(() =>
+      db.run(
+        `INSERT INTO applications (
+          id, company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          appData.id,
+          appData.company,
+          appData.role,
+          appData.stage,
+          appData.date,
+          appData.salary,
+          appData.location,
+          appData.workMode,
+          appData.url,
+          appData.notes,
+          appData.reminderDate || null,
+          JSON.stringify(appData.checklist || []),
+          JSON.stringify(appData.contacts || []),
+          JSON.stringify(appData.history || []),
+        ],
+      ),
     );
 
     res.status(201).json(appData);
@@ -349,6 +679,9 @@ app.put("/api/applications/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const appData: JobApplication = req.body;
+    if (!appData || typeof appData !== "object" || Array.isArray(appData)) {
+      return res.status(400).json({ error: "Application data must be an object" });
+    }
     const missingFields = missingRequiredStringFields(
       appData as unknown as Record<string, unknown>,
       APPLICATION_REQUIRED_FIELDS,
@@ -378,38 +711,40 @@ app.put("/api/applications/:id", async (req, res) => {
         .json({ error: `Application with ID ${id} not found` });
     }
 
-    await db.run(
-      `UPDATE applications SET
-        company = ?,
-        role = ?,
-        stage = ?,
-        date = ?,
-        salary = ?,
-        location = ?,
-        workMode = ?,
-        url = ?,
-        notes = ?,
-        reminderDate = ?,
-        checklist = ?,
-        contacts = ?,
-        history = ?
-      WHERE id = ?`,
-      [
-        appData.company,
-        appData.role,
-        appData.stage,
-        appData.date,
-        appData.salary,
-        appData.location,
-        appData.workMode,
-        appData.url,
-        appData.notes,
-        appData.reminderDate || null,
-        JSON.stringify(appData.checklist || []),
-        JSON.stringify(appData.contacts || []),
-        JSON.stringify(appData.history || []),
-        id,
-      ],
+    await withWriteLock(() =>
+      db.run(
+        `UPDATE applications SET
+          company = ?,
+          role = ?,
+          stage = ?,
+          date = ?,
+          salary = ?,
+          location = ?,
+          workMode = ?,
+          url = ?,
+          notes = ?,
+          reminderDate = ?,
+          checklist = ?,
+          contacts = ?,
+          history = ?
+        WHERE id = ?`,
+        [
+          appData.company,
+          appData.role,
+          appData.stage,
+          appData.date,
+          appData.salary,
+          appData.location,
+          appData.workMode,
+          appData.url,
+          appData.notes,
+          appData.reminderDate || null,
+          JSON.stringify(appData.checklist || []),
+          JSON.stringify(appData.contacts || []),
+          JSON.stringify(appData.history || []),
+          id,
+        ],
+      ),
     );
 
     res.json(appData);
@@ -433,7 +768,9 @@ app.delete("/api/applications/:id", async (req, res) => {
         .json({ error: `Application with ID ${id} not found` });
     }
 
-    await db.run("DELETE FROM applications WHERE id = ?", [id]);
+    await withWriteLock(() =>
+      db.run("DELETE FROM applications WHERE id = ?", [id]),
+    );
     res.json({ message: `Successfully deleted application ${id}` });
   } catch (error: any) {
     console.error("Error deleting application:", error);
@@ -487,61 +824,64 @@ app.post("/api/profiles", async (req, res) => {
         .json({ error: "Missing required fields (id, fullName)" });
     }
 
-    const existing = await db.get("SELECT id FROM profiles WHERE id = ?", [
-      profile.id,
-    ]);
-    if (existing) {
-      // Update
-      await db.run(
-        `UPDATE profiles SET
-          fullName = ?,
-          email = ?,
-          phone = ?,
-          title = ?,
-          bio = ?,
-          resumeText = ?,
-          resumeFileName = ?,
-          resumeFile = ?,
-          updatedAt = ?
-        WHERE id = ?`,
-        [
-          profile.fullName,
-          profile.email,
-          profile.phone,
-          profile.title,
-          profile.bio,
-          profile.resumeText || null,
-          profile.resumeFileName || null,
-          profile.resumeFile || null,
-          new Date().toISOString(),
-          profile.id,
-        ],
-      );
-    } else {
-      // Insert
-      await db.run(
-        `INSERT INTO profiles (
-          id, fullName, email, phone, title, bio, resumeText, resumeFileName, resumeFile, updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          profile.id,
-          profile.fullName,
-          profile.email,
-          profile.phone,
-          profile.title,
-          profile.bio,
-          profile.resumeText || null,
-          profile.resumeFileName || null,
-          profile.resumeFile || null,
-          new Date().toISOString(),
-        ],
-      );
-    }
+    const isExisting = await withWriteLock(async () => {
+      const existing = await db.get("SELECT id FROM profiles WHERE id = ?", [
+        profile.id,
+      ]);
+      if (existing) {
+        // Update
+        await db.run(
+          `UPDATE profiles SET
+            fullName = ?,
+            email = ?,
+            phone = ?,
+            title = ?,
+            bio = ?,
+            resumeText = ?,
+            resumeFileName = ?,
+            resumeFile = ?,
+            updatedAt = ?
+          WHERE id = ?`,
+          [
+            profile.fullName,
+            profile.email,
+            profile.phone,
+            profile.title,
+            profile.bio,
+            profile.resumeText || null,
+            profile.resumeFileName || null,
+            profile.resumeFile || null,
+            new Date().toISOString(),
+            profile.id,
+          ],
+        );
+      } else {
+        // Insert
+        await db.run(
+          `INSERT INTO profiles (
+            id, fullName, email, phone, title, bio, resumeText, resumeFileName, resumeFile, updatedAt
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            profile.id,
+            profile.fullName,
+            profile.email,
+            profile.phone,
+            profile.title,
+            profile.bio,
+            profile.resumeText || null,
+            profile.resumeFileName || null,
+            profile.resumeFile || null,
+            new Date().toISOString(),
+          ],
+        );
+      }
+      return Boolean(existing);
+    });
 
     const saved = await db.get("SELECT * FROM profiles WHERE id = ?", [
       profile.id,
     ]);
-    res.status(existing ? 200 : 201).json(saved);
+    res.status(isExisting ? 200 : 201).json(saved);
   } catch (error: any) {
     console.error("Error saving profile:", error);
     res.status(500).json({ error: error.message });
@@ -557,7 +897,9 @@ app.delete("/api/profiles/:id", async (req, res) => {
       return res.status(404).json({ error: `Profile with ID ${id} not found` });
     }
 
-    await db.run("DELETE FROM profiles WHERE id = ?", [id]);
+    await withWriteLock(() =>
+      db.run("DELETE FROM profiles WHERE id = ?", [id]),
+    );
     res.json({ message: `Successfully deleted profile ${id}` });
   } catch (error: any) {
     console.error("Error deleting profile:", error);
@@ -822,7 +1164,7 @@ app.get("/api/automation/queue", async (req, res) => {
 // POST /api/automation/queue/:id/apply - Apply a proposed automation action
 app.post("/api/automation/queue/:id/apply", async (req, res) => {
   try {
-    await applyAutomationQueueItem(db, req.params.id);
+    await withWriteLock(() => applyAutomationQueueItem(db, req.params.id));
     res.json({ status: "applied" });
   } catch (error: any) {
     console.error("Error applying automation queue item:", error);
@@ -833,7 +1175,7 @@ app.post("/api/automation/queue/:id/apply", async (req, res) => {
 // POST /api/automation/queue/:id/ignore - Ignore an automation queue item
 app.post("/api/automation/queue/:id/ignore", async (req, res) => {
   try {
-    await ignoreAutomationQueueItem(db, req.params.id);
+    await withWriteLock(() => ignoreAutomationQueueItem(db, req.params.id));
     res.json({ status: "ignored" });
   } catch (error: any) {
     console.error("Error ignoring automation queue item:", error);
@@ -851,12 +1193,25 @@ app.post("/api/automation/queue/:id/link", async (req, res) => {
         .status(400)
         .json({ error: "Missing required field (applicationId)" });
     }
-    await linkAutomationQueueItem(db, req.params.id, applicationId);
+    await withWriteLock(() =>
+      linkAutomationQueueItem(db, req.params.id, applicationId),
+    );
     res.json({ status: "applied" });
   } catch (error: any) {
     console.error("Error linking automation queue item:", error);
     res.status(400).json({ error: error.message });
   }
+});
+
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === "entity.too.large" || err?.status === 413) {
+    const errorMsg =
+      req.path === "/api/import"
+        ? "Import payload exceeds maximum size limit"
+        : "Payload exceeds maximum size limit";
+    return res.status(413).json({ error: errorMsg });
+  }
+  next(err);
 });
 
 // Create combined HTTP & WebSocket server

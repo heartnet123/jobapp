@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onUnmounted, computed } from 'vue';
+import { ref, watch, onUnmounted, computed, nextTick } from 'vue';
 import type { JobApplication, Stage, ChecklistItem, Contact } from '@jobapp/shared';
 import { STAGES as stages, WORK_MODES as workModes } from '@jobapp/shared';
 import { getTodayString, formatRelativeTime } from '../utils';
@@ -19,6 +19,15 @@ const todayMinDate = computed(getTodayString);
 
 const drawerPanel = ref<HTMLElement | null>(null);
 const isConfirmOpen = ref(false);
+const confirmPanel = ref<HTMLElement | null>(null);
+let previousFocus: HTMLElement | null = null;
+let deleteTrigger: HTMLElement | null = null;
+watch(isConfirmOpen, async (open) => {
+  if (open) deleteTrigger = document.activeElement as HTMLElement;
+  await nextTick();
+  if (open) confirmPanel.value?.querySelector<HTMLButtonElement>('button')?.focus();
+  else deleteTrigger?.focus();
+});
 const validationErrors = ref<{ company?: string; role?: string; url?: string }>({});
 
 const form = ref<Omit<JobApplication, 'id'> & { reminderDate: string; contacts: Contact[] }>({
@@ -53,12 +62,12 @@ function handleGlobalKeydown(e: KeyboardEvent) {
     if (!drawerPanel.value) return;
     
     // Find all focusable elements inside the drawer (excluding the hidden inputs and inactive overlay elements)
-    const focusables = drawerPanel.value.querySelectorAll(
-      'input:not([disabled]):not([type="checkbox"]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [role="radio"]'
+    const focusables = (isConfirmOpen.value ? confirmPanel.value : drawerPanel.value)?.querySelectorAll<HTMLElement>(
+      'input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href]'
     );
     
     // Include visible custom checkbox label focus targets if needed or keep it basic
-    const items = Array.from(focusables) as HTMLElement[];
+    const items = Array.from(focusables || []).filter(item => item.getClientRects().length > 0 && item.tabIndex >= 0);
     if (items.length === 0) return;
     
     const first = items[0];
@@ -84,6 +93,7 @@ watch(
   (open) => {
     validationErrors.value = {};
     if (open) {
+      previousFocus = document.activeElement as HTMLElement;
       document.addEventListener('keydown', handleGlobalKeydown);
 
       // Reset form depending on mode
@@ -142,6 +152,7 @@ watch(
       }, 100);
     } else {
       document.removeEventListener('keydown', handleGlobalKeydown);
+      previousFocus?.focus();
     }
   },
   { immediate: true }
@@ -378,7 +389,8 @@ function getHistoryLabel(type: string): string {
   <div class="drawer-overlay" :class="{ open: isOpen }" @click="emit('close')">
     <div 
       ref="drawerPanel"
-      class="drawer-panel" 
+      class="drawer-panel"
+      :inert="!isOpen || isConfirmOpen"
       :class="{ open: isOpen }" 
       role="dialog" 
       aria-modal="true" 
@@ -434,14 +446,13 @@ function getHistoryLabel(type: string): string {
 
           <div class="form-field full-width">
             <label id="stage-label">Current Stage</label>
-            <div class="stage-selectors" role="radiogroup" aria-labelledby="stage-label">
+            <div class="stage-selectors" role="group" aria-labelledby="stage-label">
               <button
                 v-for="s in stages"
                 :key="s"
                 type="button"
                 class="stage-selector"
-                role="radio"
-                :aria-checked="form.stage === s"
+                :aria-pressed="form.stage === s"
                 :class="[
                   `stage-${s.toLowerCase().replace(/\s+/g, '-').replace('-home', 'home')}`,
                   { active: form.stage === s }
@@ -577,6 +588,7 @@ function getHistoryLabel(type: string): string {
 
           <div class="add-todo-group">
             <input
+              aria-label="New checklist item"
               v-model="newTodoText"
               type="text"
               placeholder="Add next action item..."
@@ -867,7 +879,7 @@ function getHistoryLabel(type: string): string {
 
   <!-- Custom Delete Confirmation Dialog Modal -->
   <div class="confirm-overlay" :class="{ open: isConfirmOpen }" @click="cancelDelete" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-desc">
-    <div class="confirm-modal" @click.stop>
+    <div ref="confirmPanel" class="confirm-modal" :inert="!isConfirmOpen" @click.stop>
       <div class="confirm-icon">
         <iconify-icon icon="solar:danger-triangle-linear"></iconify-icon>
       </div>
@@ -880,7 +892,7 @@ function getHistoryLabel(type: string): string {
           Cancel
         </button>
         <button type="button" class="confirm-btn delete" @click="confirmDelete">
-          Delete Opportunity
+          Delete Application
         </button>
       </div>
     </div>
@@ -917,7 +929,7 @@ function getHistoryLabel(type: string): string {
   flex-direction: column;
   box-shadow: -10px 0 30px -10px rgba(0, 0, 0, 0.7);
   transform: translateX(100%);
-  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 260ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .drawer-panel.open {
@@ -956,12 +968,16 @@ function getHistoryLabel(type: string): string {
   font-size: 1.5rem;
   padding: 0.25rem;
   border-radius: var(--radius-md, 0.375rem);
-  transition: color var(--transition-speed-fast), background-color var(--transition-speed-fast);
+  transition: color var(--transition-speed-fast), background-color var(--transition-speed-fast), transform 80ms var(--transition-ease);
 }
 
 .close-btn:hover {
   color: var(--neutral-100);
   background: var(--neutral-900);
+}
+
+.close-btn:active {
+  transform: scale(0.95);
 }
 
 .drawer-body {
@@ -1064,10 +1080,11 @@ function getHistoryLabel(type: string): string {
   font-size: 0.75rem;
   font-weight: 600;
   border-radius: var(--radius-full, 9999px);
-  border: 1px solid;
+  border: 1px solid var(--neutral-800);
   background: transparent;
-  opacity: 0.4;
-  transition: opacity var(--transition-speed-fast), background-color var(--transition-speed-fast), transform var(--transition-speed-fast);
+  color: var(--neutral-400);
+  opacity: 1;
+  transition: opacity var(--transition-speed-fast), background-color var(--transition-speed-fast), border-color var(--transition-speed-fast), transform var(--transition-speed-fast);
 }
 
 .stage-selector:hover {
@@ -1245,6 +1262,11 @@ function getHistoryLabel(type: string): string {
   color: var(--neutral-100);
   font-size: 0.85rem;
   outline: none;
+  transition: border-color 150ms var(--transition-ease);
+}
+
+.add-todo-group input:focus {
+  border-color: var(--color-primary);
 }
 
 .add-todo-btn {
@@ -1290,6 +1312,10 @@ function getHistoryLabel(type: string): string {
 
 .action-btn:hover {
   transform: translateY(-1px);
+}
+
+.action-btn:active {
+  transform: scale(0.97);
 }
 
 .cancel-btn {
@@ -1474,6 +1500,12 @@ function getHistoryLabel(type: string): string {
   cursor: pointer;
   outline: none;
   transition: color var(--transition-speed-fast) var(--transition-ease);
+}
+
+.accordion-header:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm, 0.25rem);
 }
 
 .accordion-header:hover {
@@ -2038,7 +2070,8 @@ function getHistoryLabel(type: string): string {
  * RESPONSIVE MOBILE FORM REFITTING
  * ------------------------------------------------------------- */
 @media (max-width: 480px) {
-  .form-grid {
+  .form-grid,
+  .contact-form-grid {
     grid-template-columns: 1fr;
     gap: 1rem;
   }

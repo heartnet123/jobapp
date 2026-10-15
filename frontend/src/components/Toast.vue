@@ -57,11 +57,10 @@ onUnmounted(() => {
   min-width: 18rem;
   max-width: 24rem;
   padding: 0.75rem 1rem;
-  background: rgba(23, 23, 23, 0.85); /* 23, 23, 23 matches neutral-900 */
+  background: var(--neutral-900);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-md, 0.5rem);
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(12px);
   color: var(--neutral-50);
   pointer-events: auto;
 }

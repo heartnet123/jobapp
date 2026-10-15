@@ -52,3 +52,19 @@ export interface UserProfile {
   resumeFile?: string; // base64 string
   updatedAt: string;
 }
+
+export interface ApplicationExport {
+  version: number;
+  exportedAt: string;
+  count: number;
+  applications: JobApplication[];
+}
+
+export type ImportConflictPolicy = 'skip' | 'overwrite';
+
+export interface ImportResult {
+  total: number;
+  inserted: number;
+  updated: number;
+  skipped: number;
+}
