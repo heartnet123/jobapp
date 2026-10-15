@@ -377,7 +377,11 @@ app.get("/api/applications", async (req, res) => {
 
 function escapeCsvCell(val: unknown): string {
   if (val === null || val === undefined) return "";
-  const str = String(val);
+  let str = String(val);
+  // Neutralize spreadsheet formula triggers (CSV injection) before quoting.
+  if (/^[=+\-@\t\r\n]/.test(str)) {
+    str = `'${str}`;
+  }
   if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
     return `"${str.replace(/"/g, '""')}"`;
   }
@@ -560,9 +564,10 @@ app.post("/api/import", async (req, res) => {
 
           if (conflictPolicy === "skip") {
             const insertRes = await db.run(
-              `INSERT OR IGNORE INTO applications (
+              `INSERT INTO applications (
                 company, role, stage, date, salary, location, workMode, url, notes, reminderDate, checklist, contacts, history, id
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO NOTHING`,
               [...appValues, app.id],
             );
             if ((insertRes.changes ?? 0) > 0) {

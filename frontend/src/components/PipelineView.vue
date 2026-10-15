@@ -254,13 +254,15 @@ function onPointerCancel(event: PointerEvent) {
             @pointermove="onPointerMove"
             @pointerup="onPointerUp"
             @pointercancel="onPointerCancel"
-            tabindex="0"
-            role="button"
-            :aria-label="`View details for ${app.company}, role ${app.role}`"
             @click="onCardClick(app)"
-            @keydown.enter.prevent="emit('select', app)"
-            @keydown.space.prevent="emit('select', app)"
           >
+            <!-- Dedicated activation control so quick-move buttons are not nested inside role="button". -->
+            <button
+              type="button"
+              class="visually-hidden card-select-btn"
+              :aria-label="`View details for ${app.company}, role ${app.role}`"
+              @click.stop="onCardClick(app)"
+            ></button>
             <div class="card-header">
               <div class="card-company-wrapper">
                 <span class="card-company">{{ app.company }}</span>

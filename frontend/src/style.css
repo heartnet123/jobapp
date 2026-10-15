@@ -74,7 +74,7 @@
 
 /* Focus styling for custom grid interactive elements */
 .table-row:focus-visible,
-.job-card:focus-visible,
+.job-card:has(.card-select-btn:focus-visible),
 .stage-selector:focus-visible,
 .tab-button:focus-visible {
   outline: 2px solid var(--color-primary);

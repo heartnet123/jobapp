@@ -523,6 +523,25 @@ describe('SQLite Daemon Integration Tests', () => {
     expect(text).toContain(testApp.company);
   });
 
+  it('should neutralize spreadsheet formula triggers in CSV export (GET /api/export?format=csv)', async () => {
+    const formulaApp: JobApplication = {
+      ...testApp,
+      id: 'APP-FORMULA-001',
+      company: '=2+2',
+    };
+
+    await fetch(`http://localhost:${TEST_PORT}/api/applications`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(formulaApp),
+    });
+
+    const res = await fetch(`http://localhost:${TEST_PORT}/api/export?format=csv`);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("'=2+2");
+  });
+
   it('should import applications with skip duplicate resolution (POST /api/import)', async () => {
     const importPayload = {
       conflictPolicy: 'skip',

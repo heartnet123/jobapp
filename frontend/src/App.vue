@@ -772,7 +772,7 @@ function triggerBrowserNotifications() {
             </span>
           </div>
           <div class="banner-actions">
-            <button type="button" class="banner-action-btn primary" @click="toggleNotificationsDropdown">
+            <button type="button" class="banner-action-btn primary" @click.stop="toggleNotificationsDropdown">
               Review Reminders
             </button>
             <button type="button" class="banner-dismiss-btn" @click="dismissNotificationBar" aria-label="Dismiss alert">
